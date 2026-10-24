@@ -56,6 +56,8 @@ int main(int argc, char** argv) {
         }
         printf("top-1 agreement %d/%zu, max |logit diff| %.4f\n", agree, toks.size(), maxd);
     }
+    auto g0 = std::chrono::steady_clock::now();
     for (int g = 0; g < gen; g++) { printf("gen[%d] = %d\n", g, next); next = eng.step(next, (uint32_t)(toks.size() + g)); }
+    if (gen > 0) { double gdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - g0).count(); printf("decode: %d tokens in %.3f s = %.2f tok/s (%.1f ms/token)\n", gen, gdt, gen / gdt, gdt / gen * 1e3); }
     return 0;
 }

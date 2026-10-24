@@ -38,3 +38,7 @@ $(BUILD):
 
 clean:
 	rm -rf $(BUILD)
+
+# standalone tools
+$(BUILD)/bench_gemv: tools/bench_gemv.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/bench_gemv.cpp src/gguf.cpp src/gpu.cpp $(LDFLAGS) -o $@
