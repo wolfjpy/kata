@@ -1,0 +1,39 @@
+== A: global barrier (R=300 barriers). 'FAIL' = threadgroups not co-resident (bounded spin timed out)
+  T= 256 G= 12 : ok    430.5 us total, 1.44 us / barrier
+  T= 256 G= 24 : ok    427.0 us total, 1.42 us / barrier
+  T= 256 G= 36 : ok    446.2 us total, 1.49 us / barrier
+  T= 256 G= 48 : ok    540.2 us total, 1.80 us / barrier
+  T= 256 G= 64 : ok    710.6 us total, 2.37 us / barrier
+  T= 256 G= 96 : ok    1053.6 us total, 3.51 us / barrier
+  T= 256 G=128 : ok    1327.3 us total, 4.42 us / barrier
+  T= 256 G=144 : ok    1420.6 us total, 4.74 us / barrier
+  T= 256 G=160 : FAIL  47713.0 us total, 159.04 us / barrier
+  T=1024 G= 12 : ok    134.6 us total, 0.45 us / barrier
+  T=1024 G= 24 : ok    160.2 us total, 0.53 us / barrier
+  T=1024 G= 36 : ok    199.8 us total, 0.67 us / barrier
+  T=1024 G= 48 : FAIL  42265.1 us total, 140.88 us / barrier
+== B: chain of N dependent dispatches (tiny kernel, 48 TG x 256 thr)
+  N= 100 : 60.9 us total => 0.61 us / dispatch
+  N= 400 : 242.8 us total => 0.61 us / dispatch
+  N=1600 : 976.5 us total => 0.61 us / dispatch
+== C: stream 96 phases x 16 MiB = 1.61 GB (random data), per phase = 16 MiB
+  -- G=16 TG x T=1024 thr (NT=16384, 64 loads/thread/phase)
+    V0 single dispatch, no barriers    : ok    11159.4 us  =>  144.3 GB/s   (116.24 us / phase)
+    V1 one dispatch per phase          : ok    11071.3 us  =>  145.5 GB/s   (115.33 us / phase)
+    V2 persistent + grid barrier (naive) : ok    11859.6 us  =>  135.8 GB/s   (123.54 us / phase)
+    V3 persistent + prefetch before barrier : ok    12184.9 us  =>  132.2 GB/s   (126.93 us / phase)
+  -- G=32 TG x T=256 thr (NT=8192, 128 loads/thread/phase)
+    V0 single dispatch, no barriers    : ok    11019.7 us  =>  146.2 GB/s   (114.79 us / phase)
+    V1 one dispatch per phase          : ok    10997.6 us  =>  146.5 GB/s   (114.56 us / phase)
+    V2 persistent + grid barrier (naive) : ok    11257.9 us  =>  143.1 GB/s   (117.27 us / phase)
+    V3 persistent + prefetch before barrier : ok    11635.1 us  =>  138.4 GB/s   (121.20 us / phase)
+  -- G=64 TG x T=256 thr (NT=16384, 64 loads/thread/phase)
+    V0 single dispatch, no barriers    : ok    11076.0 us  =>  145.4 GB/s   (115.37 us / phase)
+    V1 one dispatch per phase          : ok    10992.1 us  =>  146.5 GB/s   (114.50 us / phase)
+    V2 persistent + grid barrier (naive) : ok    12378.0 us  =>  130.1 GB/s   (128.94 us / phase)
+    V3 persistent + prefetch before barrier : ok    12091.2 us  =>  133.2 GB/s   (125.95 us / phase)
+  -- G=128 TG x T=256 thr (NT=32768, 32 loads/thread/phase)
+    V0 single dispatch, no barriers    : ok    11076.5 us  =>  145.4 GB/s   (115.38 us / phase)
+    V1 one dispatch per phase          : ok    11037.0 us  =>  145.9 GB/s   (114.97 us / phase)
+    V2 persistent + grid barrier (naive) : ok    12207.7 us  =>  131.9 GB/s   (127.16 us / phase)
+    V3 persistent + prefetch before barrier : ok    15294.9 us  =>  105.3 GB/s   (159.32 us / phase)
