@@ -55,3 +55,6 @@ $(BUILD)/alu_probe: tools/alu_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 
 $(BUILD)/probe_flash: tools/probe_flash.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/probe_flash.cpp src/gpu.cpp $(LDFLAGS) -o $@
+
+$(BUILD)/layout_probe: tools/layout_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/layout_probe.cpp src/gpu.cpp $(LDFLAGS) -o $@

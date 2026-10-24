@@ -54,7 +54,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
             for (uint32_t r = 0; r < 96; r++) { const uint16_t* row = r < 48 ? a + (size_t)r * 5120 : b + (size_t)(r - 48) * 5120;
                 for (uint32_t k = 0; k < 5120; k++) { uint32_t bits = (uint32_t)row[k] << 16; float f; memcpy(&f, &bits, 4); d[((size_t)(r / 64) * 5120 + k) * 64 + (r % 64)] = (_Float16)f; } } }
     }
-    pXq = gpu.alloc((size_t)kMaxChunk * 17408); pSx = gpu.alloc((size_t)kMaxChunk * 4); pStage8 = gpu.alloc((size_t)17408 * 5120); pStageSW = gpu.alloc(4 << 20); bufLogitsAll = gpu.alloc((size_t)128 * kVocab * 4);
+    pXq = gpu.alloc((size_t)kMaxChunk * 17408); pSx = gpu.alloc((size_t)kMaxChunk * 136 * 4); pStage8 = gpu.alloc((size_t)17408 * 5120); pStageSW = gpu.alloc(4 << 20); bufLogitsAll = gpu.alloc((size_t)128 * kVocab * 4);
     {   // batched prefill buffers
         const size_t R = kMaxChunk;
         pTok = gpu.alloc(R * 4); pX[0] = gpu.alloc(R * 5120 * 4); pX[1] = gpu.alloc(R * 5120 * 4); pXp = gpu.alloc(R * 17408 * 2); pHh = gpu.alloc(R * 5120 * 2);
@@ -172,11 +172,13 @@ void Engine::dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B
     e->setComputePipelineState(gpu.pipe("k_gemm_f16")); e->setBuffer(A, 0, 0); e->setBuffer(B, bOff, 1); e->setBuffer(C, 0, 2); e->setBytes(dims, 16, 3);
     if (mfast) e->dispatchThreadgroups(MTL::Size(Mpad / 32, N / 64, 1), MTL::Size(32, 1, 1)); else e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 32, 1), MTL::Size(32, 1, 1));
 }
-void Engine::dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N) {
+void Engine::dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N, const char* name) {
     static const bool oldExpand = getenv("BONSAI_OLD_EXPAND") != nullptr;
-    if (int8Mode) {
+    static const std::string excl = getenv("BONSAI_I8_EXCLUDE") ? std::string(",") + getenv("BONSAI_I8_EXCLUDE") + "," : std::string();
+    const bool useI8 = int8Mode && excl.find(std::string(",") + name + ",") == std::string::npos;
+    if (useI8) {
         if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe(oldExpand ? "k_expand_i8" : "k_expand_i8_v2")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
-        if (!sk("p_gemm")) { uint32_t dims[4] = {Mpad, N, K, 0}; e->setComputePipelineState(gpu.pipe("k_gemm_i8")); e->setBuffer(pXq, 0, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBuffer(pSx, 0, 3); e->setBuffer(C, 0, 4); e->setBytes(dims, 16, 5); e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 64, 1), MTL::Size(128, 1, 1)); }
+        if (!sk("p_gemm")) { static const uint32_t i8mode = getenv("BONSAI_I8_MODE") ? (uint32_t)atoi(getenv("BONSAI_I8_MODE")) : 0u; uint32_t dims[4] = {Mpad, N, K, i8mode}; e->setComputePipelineState(gpu.pipe("k_gemm_i8")); e->setBuffer(pXq, 0, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBuffer(pSx, 0, 3); e->setBuffer(C, 0, 4); e->setBytes(dims, 16, 5); e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 64, 1), MTL::Size(128, 1, 1)); }
         return;
     }
     if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe(oldExpand ? "k_expand_ptq1" : "k_expand_ptq1_v2")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage, 0, 1); e->setBytes(&K, 4, 2);
@@ -191,7 +193,7 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
     const uint32_t H = kHidden, Mpad32 = (M + 31) / 32 * 32, Mpad = int8Mode ? (M + 63) / 64 * 64 : Mpad32;
     MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     int c = 0;
-    auto quant = [&](uint32_t K) { if (!int8Mode || sk("p_quant")) return; e->setComputePipelineState(gpu.pipe("k_quant_rows")); e->setBuffer(pXp, 0, 0); e->setBuffer(pXq, 0, 1); e->setBuffer(pSx, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1)); };
+    auto quant = [&](uint32_t K) { if (!int8Mode || sk("p_quant")) return; e->setComputePipelineState(gpu.pipe("k_quant_rows")); e->setBuffer(pXp, 0, 0); e->setBuffer(pXq, 0, 1); e->setBuffer(pSx, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&Mpad, 4, 4); e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1)); };
     if (!sk("p_embed")) { e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(pTok, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(pX[0], 0, 3); e->dispatchThreadgroups(MTL::Size(5, M, 1), MTL::Size(256, 1, 1)); }
     auto fusedNorm = [&](MTL::Buffer* x, MTL::Buffer* y, uint64_t gsOff, MTL::Buffer* xnew, uint64_t gammaOff, bool wantH) {
         if (sk("p_norm")) return;
@@ -212,8 +214,8 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
         const LayerW& L = layers[il];
         if (!L.isAttn) {
             const uint32_t si = (uint32_t)L.stateIdx; const uint64_t cOff = (uint64_t)si * 3 * kGdnQkvDim * 4;
-            dExpandGemm(e, L.qkv, pXp, pQkv, Mpad, H, kGdnQkvDim);
-            dExpandGemm(e, L.gate, pXp, pZ, Mpad, H, kGdnZDim);
+            dExpandGemm(e, L.qkv, pXp, pQkv, Mpad, H, kGdnQkvDim, "qkv");
+            dExpandGemm(e, L.gate, pXp, pZ, Mpad, H, kGdnZDim, "z");
             if (!sk("p_gdn_ab")) dGemm(e, pHh, wabAll, (uint64_t)si * 2 * 5120 * 64 * 2, pAB, Mpad32, H, 128);
             if (!sk("p_gdn_conv")) { e->setComputePipelineState(gpu.pipe("k_gdn_conv_t")); e->setBuffer(pQkv, 0, 0); e->setBuffer(convState, cOff, 1); e->setBuffer(wbuf, L.conv, 2); e->setBuffer(pConv, 0, 3); e->setBytes(&M, 4, 4);
               e->dispatchThreads(MTL::Size(kGdnQkvDim / 4, (M + 15) / 16, 1), MTL::Size(64, 1, 1));
@@ -227,12 +229,12 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
                 e->setComputePipelineState(gpu.pipe("k_gdn_gnorm_b")); e->setBuffer(pRaw, 0, 0); e->setBuffer(pZ, 0, 1); e->setBuffer(wbuf, L.ssmNorm, 2); e->setBuffer(pGdnOut, 0, 3); e->dispatchThreadgroups(MTL::Size(M, 48, 1), MTL::Size(128, 1, 1));
             }
             fwhtB(pGdnOut, nullptr, sg6144, 6144, 2);
-            dExpandGemm(e, L.ssmOut, pXp, pTmp, Mpad, 6144, H);
+            dExpandGemm(e, L.ssmOut, pXp, pTmp, Mpad, 6144, H, "ssmout");
         } else {
             const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = (uint64_t)ai * maxCtx * kKvDim * 2;
-            dExpandGemm(e, L.wq, pXp, pQfull, Mpad, H, kQProjOut);
-            dExpandGemm(e, L.wk, pXp, pK, Mpad, H, kKvDim);
-            dExpandGemm(e, L.wv, pXp, pV, Mpad, H, kKvDim);
+            dExpandGemm(e, L.wq, pXp, pQfull, Mpad, H, kQProjOut, "wq");
+            dExpandGemm(e, L.wk, pXp, pK, Mpad, H, kKvDim, "wk");
+            dExpandGemm(e, L.wv, pXp, pV, Mpad, H, kKvDim, "wv");
             if (!sk("p_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
               e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9); { uint32_t h00 = 0; e->setBytes(&h00, 4, 10); }
               e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
@@ -249,14 +251,14 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
                 e->dispatchThreadgroups(MTL::Size(kHeads, mt, 1), MTL::Size(256, 1, 1));
             }
             fwhtB(pAttnO, nullptr, sg6144, 6144, 3);
-            dExpandGemm(e, L.wo, pXp, pTmp, Mpad, 6144, H);
+            dExpandGemm(e, L.wo, pXp, pTmp, Mpad, 6144, H, "wo");
         }
         if (dbgBase >= 0) dCopy(e, pTmp, dbgBlk, ((uint64_t)il * dbgTokens + dbgBase) * H * 4, M * H);
         fusedNorm(pX[c], pTmp, (uint64_t)(il * 2 + 1) * H * 4, pX[c ^ 1], layers[il].postNorm, false); c ^= 1;
-        dExpandGemm(e, L.ffnGate, pXp, pG, Mpad, H, kFfn);
-        dExpandGemm(e, L.ffnUp, pXp, pU, Mpad, H, kFfn);
+        dExpandGemm(e, L.ffnGate, pXp, pG, Mpad, H, kFfn, "gate");
+        dExpandGemm(e, L.ffnUp, pXp, pU, Mpad, H, kFfn, "up");
         fwhtB(pG, pU, sg17408, kFfn, 1);
-        dExpandGemm(e, L.ffnDown, pXp, pTmp, Mpad, kFfn, H);
+        dExpandGemm(e, L.ffnDown, pXp, pTmp, Mpad, kFfn, H, "down");
         if (il + 1 < kLayers) { fusedNorm(pX[c], pTmp, (uint64_t)((il + 1) * 2) * H * 4, pX[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn); }
         else { uint32_t n = M * H; e->setComputePipelineState(gpu.pipe("k_add2")); e->setBuffer(pX[c], 0, 0); e->setBuffer(pTmp, 0, 1); e->setBuffer(pX[c ^ 1], 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
         c ^= 1;

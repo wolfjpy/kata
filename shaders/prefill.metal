@@ -358,23 +358,23 @@ kernel void k_expand_i8(device const uchar* W [[buffer(0)]], device char* out [[
     device char* o = out + (ulong(nt) * ulong(K) + ulong(kb) * 128ul) * 64ul;
     for (uint i = tid; i < 128u * 64u; i += 256u) o[i] = tile[i];
 }
-// ---- per-token activation quantisation: fp16 [M][K] -> int8 [M][K] + scale [M] ----
-kernel void k_quant_rows(device const half* x [[buffer(0)]], device char* q [[buffer(1)]], device float* sx [[buffer(2)]], constant uint& K [[buffer(3)]],
-                         uint t [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    threadgroup float part[8];
-    device const half* xr = x + ulong(t) * K; device char* qr = q + ulong(t) * K;
-    float mx = 0.0f; for (uint i = tid; i < K; i += 256) mx = max(mx, fabs(float(xr[i])));
-    mx = simd_max(mx); if (lane == 0) part[sg] = mx;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    float amax = 0.0f; for (uint s = 0; s < 8; s++) amax = max(amax, part[s]);
-    const float scale = amax > 0.0f ? amax / 127.0f : 1.0f, inv = 1.0f / scale;
-    for (uint i = tid; i < K; i += 256) qr[i] = char(clamp(rint(float(xr[i]) * inv), -127.0f, 127.0f));
-    if (tid == 0) sx[t] = scale;
+// ---- activation quantisation, one scale per (token, 128-element group): fp16 [M][K] -> int8 [M][K] + scales sx[g][M] (group-major so the GEMM epilogue reads consecutive rows) ----
+kernel void k_quant_rows(device const half* x [[buffer(0)]], device char* q [[buffer(1)]], device float* sx [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& ldS [[buffer(4)]],
+                         uint t [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    device const half* xr = x + ulong(t) * K; device char* qr = q + ulong(t) * K; const uint G = K / 128u;
+    for (uint g = sg; g < G; g += 8u) {
+        const half4 v = *(device const half4*)(xr + g * 128u + lane * 4u);
+        float mx = max(max(fabs(float(v.x)), fabs(float(v.y))), max(fabs(float(v.z)), fabs(float(v.w)))); mx = simd_max(mx);
+        const float scale = mx > 0.0f ? mx / 127.0f : 1.0f, inv = 1.0f / scale;
+        char4 o = char4(char(clamp(rint(float(v.x) * inv), -127.0f, 127.0f)), char(clamp(rint(float(v.y) * inv), -127.0f, 127.0f)), char(clamp(rint(float(v.z) * inv), -127.0f, 127.0f)), char(clamp(rint(float(v.w) * inv), -127.0f, 127.0f)));
+        *(device char4*)(qr + g * 128u + lane * 4u) = o;
+        if (lane == 0) sx[ulong(g) * ldS + t] = scale;
+    }
 }
 // ---- int8 GEMM with the per-group scale epilogue; tile 64x64, 4 simdgroups, N-fast grid. M must be a multiple of 64. ----
 kernel void k_gemm_i8(device int8_t* A [[buffer(0)]], device int8_t* B [[buffer(1)]], device float* SW [[buffer(2)]], device float* SX [[buffer(3)]], device float* C [[buffer(4)]],
-                      constant uint3& dims [[buffer(5)]], uint2 tgid [[threadgroup_position_in_grid]]) {
-    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const int nt = int(tgid.x), mt = int(tgid.y); const int G = K / 128;
+                      constant uint4& dims [[buffer(5)]], uint2 tgid [[threadgroup_position_in_grid]]) {
+    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const uint mode = dims.w; const int nt = int(tgid.x), mt = int(tgid.y); const int G = K / 128;
     tensor<device float, dextents<int32_t, 2>, tensor_inline> tC(C, dextents<int32_t, 2>(N, M));
     constexpr auto desc = matmul2d_descriptor(64, 64, 128, false, false, false, matmul2d_descriptor::mode::multiply);
     matmul2d<desc, execution_simdgroups<4>> op;
@@ -385,14 +385,23 @@ kernel void k_gemm_i8(device int8_t* A [[buffer(0)]], device int8_t* B [[buffer(
     auto cAcc = op.get_destination_cooperative_tensor<decltype(a0), decltype(b0), float>();
     const uint16_t cap = cAcc.get_capacity(); uint16_t col[64], row[64];
     for (uint16_t i = 0; i < cap; i++) { cAcc[i] = 0.0f; auto ix = cAcc.get_multidimensional_index(i); col[i] = uint16_t(ix[0]); row[i] = uint16_t(ix[1]); }
+    // Element layout of the destination (verified by tools/layout_probe): element i = ((rowBlock*2 + colBlock)*2 + rowHalf)*4 + c, i.e. columns c0+c and c0+32+c, rows r0, r0+8, r0+32, r0+40.
+    // So a lane needs only eight distinct weight scales (two float4 reads) and four activation scales per K group.
+    const uint c0 = col[0], r0 = row[0];
+    bool vec = (cap == 32) && (mode == 0) && ((c0 & 3u) == 0u);
+    for (uint16_t i = 0; i < 32 && vec; i++) if (col[i] != c0 + (i & 3u) + ((i >> 3) & 1u) * 32u || row[i] != r0 + ((i >> 2) & 1u) * 8u + ((i >> 4) & 1u) * 32u) vec = false;
     for (int g = 0; g < G; g++) {
         tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> ag(A + ulong(mt) * 64ul * ulong(K) + g * 128, dextents<int32_t, 2>(128, 64), strA);
         tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> bg(B + ulong(nt) * ulong(K) * 64ul + ulong(g) * 128ul * 64ul, dextents<int32_t, 2>(64, 128));
         op.run(ag, bg, cInt);
-        device const float* swg = SW + (ulong(nt) * G + g) * 64ul;
-        for (uint16_t i = 0; i < cap; i++) if (cInt.is_valid_element(i)) cAcc[i] += float(cInt[i]) * swg[col[i]];
+        device const float* swg = SW + (ulong(nt) * G + g) * 64ul; device const float* sxg = SX + ulong(g) * ulong(M) + ulong(mt) * 64ul;
+        if (vec) {
+            const float4 sa = *(device const float4*)(swg + c0), sb = *(device const float4*)(swg + c0 + 32u);
+            const float x0 = sxg[r0], x1 = sxg[r0 + 8u], x2 = sxg[r0 + 32u], x3 = sxg[r0 + 40u];
+            for (uint16_t i = 0; i < 32; i++) { const float4 sw = ((i >> 3) & 1u) ? sb : sa; const float sxv = ((i >> 4) & 1u) ? (((i >> 2) & 1u) ? x3 : x2) : (((i >> 2) & 1u) ? x1 : x0); cAcc[i] += float(cInt[i]) * (sw[i & 3u] * sxv); }
+        }
+        else { for (uint16_t i = 0; i < cap; i++) if (cInt.is_valid_element(i)) cAcc[i] += float(cInt[i]) * (swg[col[i]] * sxg[row[i]]); }
     }
-    for (uint16_t i = 0; i < cap; i++) if (cAcc.is_valid_element(i)) cAcc[i] *= SX[mt * 64 + row[i]];
     auto mC = tC.slice(nt * 64, mt * 64);
     cAcc.store(mC);
 }

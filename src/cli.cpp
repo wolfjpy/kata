@@ -156,3 +156,37 @@ int cmdVerifyCheck(int argc, char** argv) {
     printf("verify2 vs exact decode: %zu positions | mean KL %.3e | max KL %.3e | max |logit diff| %.4f | top-1 agreement %zu/%zu\n", n, sumKl / n, maxKl, maxAbs, agree, n);
     return 0;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// bonsai kl-eval: quality of the int8 prefill path against the exact fp16 path on a text corpus. Both paths prefill the corpus chunk by chunk (each with its own state);
+// at the last `keep` positions of every chunk the full-vocabulary distributions are compared (the first pass spills its logits to a temp file).
+int cmdKlEval(int argc, char** argv) {
+    std::string model, file, metallib = "build/bonsai.metallib", spill = "/tmp/bonsai_kl_spill.bin"; int ntok = 16384, keep = 64, chunk = 1024;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--file") file = argv[++i]; else if (a == "--tokens") ntok = atoi(argv[++i]); else if (a == "--keep") keep = atoi(argv[++i]); else if (a == "--chunk") chunk = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
+    if (model.empty() || file.empty()) { fprintf(stderr, "usage: bonsai kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n"); return 1; }
+    Engine eng; if (!eng.load(model, metallib, (uint32_t)ntok + 64, 0)) return 1; Tokenizer tok; if (!tok.load(eng.gg)) return 1;
+    std::vector<int32_t> ids = tok.encode(readFile(file.c_str()), false); if ((int)ids.size() > ntok) ids.resize((size_t)ntok);
+    const int V = (int)bonsai::kVocab; const int n = (int)ids.size(); printf("corpus: %d tokens, chunk %d, comparing the last %d positions of each chunk\n", n, chunk, keep);
+    FILE* sp = fopen(spill.c_str(), "wb+"); if (!sp) { perror("spill"); return 1; }
+    auto pass = [&](bool int8, auto&& onLogits) {
+        eng.int8Mode = int8; eng.resetState();
+        for (int pos = 0; pos < n; pos += chunk) { const int m = std::min(chunk, n - pos); const int nl = std::min(keep, m); std::vector<int> t(ids.begin() + pos, ids.begin() + pos + m); eng.prefill(t.data(), (uint32_t)m, (uint32_t)pos, -1, true, (uint32_t)nl); onLogits(eng.logitsAll(), nl); }
+    };
+    pass(false, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); });
+    fflush(sp); fseek(sp, 0, SEEK_SET);
+    double sumKl = 0, maxKl = 0, sumAbs = 0; size_t cnt = 0, agree = 0; std::vector<float> ref((size_t)keep * V);
+    pass(true, [&](const float* lg, int nl) {
+        if (fread(ref.data(), 4, (size_t)nl * V, sp) != (size_t)nl * V) { fprintf(stderr, "spill read failed\n"); exit(1); }
+        for (int r = 0; r < nl; r++) {
+            const float* a = ref.data() + (size_t)r * V; const float* b = lg + (size_t)r * V; double ma = -1e30, mb = -1e30; int ba = 0, bb = 0;
+            for (int k = 0; k < V; k++) { if (a[k] > ma) { ma = a[k]; ba = k; } if (b[k] > mb) { mb = b[k]; bb = k; } }
+            double za = 0, zb = 0; for (int k = 0; k < V; k++) { za += std::exp((double)a[k] - ma); zb += std::exp((double)b[k] - mb); }
+            const double la = std::log(za) + ma, lb = std::log(zb) + mb; double kl = 0, ad = 0;
+            for (int k = 0; k < V; k++) { const double l = (double)a[k] - la, p = std::exp(l); if (p > 1e-12) kl += p * (l - ((double)b[k] - lb)); ad = std::max(ad, (double)std::fabs(a[k] - b[k])); }
+            sumKl += kl; maxKl = std::max(maxKl, kl); sumAbs = std::max(sumAbs, ad); cnt++; agree += (ba == bb);
+        }
+        printf("\r  compared %zu positions, running mean KL %.3e, top-1 %.2f%%", cnt, sumKl / cnt, 100.0 * agree / cnt); fflush(stdout);
+    });
+    printf("\nint8 vs exact fp16: %zu positions | mean KL %.3e nat | max KL %.3e | max |logit diff| %.3f | top-1 agreement %zu/%zu (%.2f%%)\n", cnt, sumKl / cnt, maxKl, sumAbs, agree, cnt, 100.0 * agree / cnt);
+    fclose(sp); remove(spill.c_str()); return 0;
+}
