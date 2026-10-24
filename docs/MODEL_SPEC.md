@@ -86,5 +86,10 @@ attn_out = Wo · H(s6144 ⊙ out)
 
 ## 9. 验证状态
 
-- 已验证:Hadamard 矩阵定义、符号向量的使用顺序(来自 Prism 源码)。
-- 待用数值对照验证:RoPE 配对与位置、GDN 抽头顺序、`ssm_out` 输入置换、attention gate 的 sigmoid、`l2_norm` 的 eps 语义。
+**M2 已用数值对照全部验证**(`build/bonsai --ref-dir ... --ref-logits ...` 对 Prism llama.cpp 的逐层导出):
+- Hadamard 矩阵与符号向量的使用顺序;embedding 的反向变换 `s ⊙ (H z)`。
+- GDN:causal conv 的抽头顺序(最老的输入对应 `w[0]`)、q/k 的 L2 归一化(`x / max(||x||, 1e-6)`)、门控与递推、gated RMSNorm、`ssm_out` 输入的 tiled→grouped 头置换。
+- 全注意力:q/k 的逐头 RMSNorm、`[query|gate]` 交错布局、partial RoPE(前 64 维、配对 `(i, i+32)`、`theta_i = pos * 1e7^(-2i/64)`)、`1/sqrt(256)` 缩放、`sigmoid(gate)`(不是 swish)。
+- FFN 与 lm_head。
+- 5 个 token 的提示:64 层残差相对误差 1e-7~1e-4,top-1 一致 5/5,最大 logit 差 0.0005。
+- 72 个 token 的提示:top-1 一致 72/72,最大 logit 差 0.0131,贪心续写与参考逐 token 一致。参考实现在长批次上走 fp16 的 mul_mm,我们全程 fp32,所以更精确的一方是我们。
