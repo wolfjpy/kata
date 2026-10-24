@@ -18,7 +18,8 @@ build/bonsai run  --model $M --prompt "Explain unified memory in one paragraph."
 build/bonsai chat --model $M --system "You are concise."          # interactive; the KV cache and GDN state are reused between turns
 build/bonsai run  --model $M --prompt "..." --no-think --temp 0    # thinking off, greedy
 build/bonsai run  --model $M --raw --file prompt.txt               # pre-rendered prompt (special tokens parsed)
-build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill path (see docs/reports/M5-prefill.md for the quality status)
+build/bonsai run  --model $M --prompt "..." --no-spec              # plain decoding (MTP speculative decoding is on by default and exact)
+build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill path: ~10 percent faster, NOT within the quality gate (see docs/reports/M5b-prefill-optimization.md)
 build/bonsai tokenize --model $M --text "hello"                    # token ids, identical to llama-tokenize
 ```
 
@@ -32,15 +33,26 @@ build/ref_logits --model $M --text "..." --out ref.bin --dump-dir dump/ --gen 12
 build/bonsai --model $M --ids 1,2,3 --ref-dir dump/ --ref-logits ref.bin     # layer-by-layer comparison
 build/bonsai --model $M --ids ... --prefill [--int8] --nlogits 72 --cmp-logits golden.bin   # KL / top-1 against saved logits
 build/bonsai --model $M --ids ... --gen 64 --skip gemv_gate,k_gdn_step       # per-kernel ablation timing
-make build/bench_gemv  # GEMV microbenchmark on real tensors
+make build/bench_gemv  # GEMV microbenchmark on real tensors (fp32 activations); build/bench_gemv2 for the two-token variants
+build/bonsai mtp-eval     --model $M --ids ... --gen 96     # how often the MTP head predicts the main model's greedy token
+build/bonsai verify-check --model $M --ids ...              # two-token verification pass vs the exact decode path (KL, top-1)
+build/bonsai kl-eval      --model $M --file corpus.txt --tokens 24576   # int8 prefill vs exact prefill on a corpus
+make build/probe_flash && build/probe_flash                 # prefill attention kernel: correctness vs CPU and speed per context length
 ```
 
 ## Status
 
 See `docs/CHECKPOINT-001.md` (design and measurements), `docs/MODEL_SPEC.md` (verified formulas) and `docs/reports/` (one report per milestone).
 
+Measured on the Mac mini M6 (the GPU throttles under sustained load, so repeated runs can differ by 10 to 15 percent).
+
 | | this engine | reference (Prism llama.cpp, same machine) |
 |---|---|---|
-| decode | **20 tok/s** | 15.6 tok/s |
-| prefill, int8 path (1024-token chunk) | **278 tok/s** | 208 tok/s (pp512) |
-| prefill, exact fp16 path | 183 tok/s | |
+| decode, plain | **19.8 tok/s** | 15.6 tok/s (tg128) |
+| decode, MTP speculative (greedy / sampling) | **25.0 / 22.7 tok/s** | |
+| prefill, exact fp16, 512 tokens | **245 tok/s** | 208 tok/s (pp512) |
+| prefill, exact fp16, 1024-token chunk | **257 tok/s** | |
+| prefill, exact fp16, 7.3K-token prompt | **213 tok/s** | |
+| prefill, int8 (`--fast`, opt-in) | 269 to 283 tok/s | |
+
+Quality: speculative decoding keeps the output distribution unchanged (verification pass vs exact decode: mean KL 4.3e-6, top-1 100 percent over 830 positions). The exact prefill path matches the fp32 golden logits (mean KL 1.4e-7). The int8 path does not meet the proposed gate (mean KL 4.4e-4, top-1 99.54 percent on 1536 positions), so it is off by default.
