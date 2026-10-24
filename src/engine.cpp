@@ -60,7 +60,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
         pTok = gpu.alloc(R * 4); pX[0] = gpu.alloc(R * 5120 * 4); pX[1] = gpu.alloc(R * 5120 * 4); pXp = gpu.alloc(R * 17408 * 2); pHh = gpu.alloc(R * 5120 * 2);
         pQkv = gpu.alloc(R * kGdnQkvDim * 4); pZ = gpu.alloc(R * 6144 * 4); pConv = gpu.alloc(R * kGdnQkvDim * 4); pAB = gpu.alloc(R * 128 * 4); pGb = gpu.alloc(R * 96 * 4); pQk = gpu.alloc(R * 4096 * 4); pRaw = gpu.alloc(R * 6144 * 4);
         pGdnOut = gpu.alloc(R * 6144 * 4); pTmp = gpu.alloc(R * 5120 * 4); pQfull = gpu.alloc(R * kQProjOut * 4); pK = gpu.alloc(R * kKvDim * 4); pV = gpu.alloc(R * kKvDim * 4);
-        pQ = gpu.alloc(R * 6144 * 4); pGate = gpu.alloc(R * 6144 * 4); pAttnO = gpu.alloc(R * 6144 * 4); pG = gpu.alloc(R * 17408 * 4); pU = gpu.alloc(R * 17408 * 4);
+        pQ = gpu.alloc(R * 6144 * 4); pQh = gpu.alloc(R * 6144 * 2); pGate = gpu.alloc(R * 6144 * 4); pAttnO = gpu.alloc(R * 6144 * 4); pG = gpu.alloc(R * 17408 * 4); pU = gpu.alloc(R * 17408 * 4);
         pStage = gpu.alloc((size_t)17408 * 5120 * 2); pPM = gpu.alloc(256 * 24 * 8 * 4); pPL = gpu.alloc(256 * 24 * 8 * 4); pPA = gpu.alloc((size_t)256 * 24 * 8 * 256 * 4);
     }
     if (dbgTokens) { dbgRes = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); dbgBlk = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); }
@@ -234,7 +234,12 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
             if (!sk("p_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
               e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9); { uint32_t h00 = 0; e->setBytes(&h00, 4, 10); }
               e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
-            if (!sk("p_attn")) for (uint32_t base = 0; base < M; base += 256) {
+            static const bool scalarAttn = getenv("BONSAI_SCALAR_ATTN") != nullptr;
+            if (!sk("p_attn") && !scalarAttn) {   // matrix-unit flash attention: the whole chunk in one dispatch
+                uint32_t n = M * 6144; e->setComputePipelineState(gpu.pipe("k_cvt_q_half")); e->setBuffer(pQ, 0, 0); e->setBuffer(pQh, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1));
+                e->setComputePipelineState(gpu.pipe("k_flash_prefill")); e->setBuffer(pQh, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pGate, 0, 3); e->setBuffer(pAttnO, 0, 4); e->setBytes(&pos0, 4, 5); e->setBytes(&M, 4, 6);
+                e->dispatchThreadgroups(MTL::Size((M + 15) / 16, kKvHeads, 1), MTL::Size(192, 1, 1));
+            } else if (!sk("p_attn")) for (uint32_t base = 0; base < M; base += 256) {
                 const uint32_t mt = std::min<uint32_t>(256, M - base), posBase = pos0 + base, S = 8;
                 e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, (uint64_t)base * 6144 * 4, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&posBase, 4, 6); { uint32_t fp0 = 0; e->setBytes(&fp0, 4, 7); }
                 e->dispatchThreadgroups(MTL::Size(S, kKvHeads, mt), MTL::Size(256, 1, 1));

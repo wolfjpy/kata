@@ -52,3 +52,6 @@ $(BUILD)/bench_gemv2: tools/bench_gemv2.cpp src/gguf.cpp src/gpu.cpp src/gguf.h 
 
 $(BUILD)/alu_probe: tools/alu_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/alu_probe.cpp src/gpu.cpp $(LDFLAGS) -o $@
+
+$(BUILD)/probe_flash: tools/probe_flash.cpp src/gpu.cpp src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/probe_flash.cpp src/gpu.cpp $(LDFLAGS) -o $@
