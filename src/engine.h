@@ -32,6 +32,11 @@ public:
     // Runs one token at position `pos`; returns the greedy next token. If dbgSlot >= 0 the per-layer residual and block outputs are recorded.
     int step(int token, uint32_t pos, int dbgSlot = -1, bool wantLogits = true);
     void resetState();
+    static constexpr uint32_t kMaxChunk = 1024;
+    // Batched prefill of M (<= kMaxChunk) tokens starting at position pos0 (exact fp16 path). Returns the greedy next token (or -1 if !wantLogits).
+    int prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase = -1, bool wantLogits = true, uint32_t nLogits = 1);
+    bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
+    const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
     const float* dbgResidual(int layer, int slot) const { return (const float*)dbgRes->contents() + ((size_t)layer * dbgTokens + slot) * bonsai::kHidden; }
     const float* dbgBlock(int layer, int slot) const { return (const float*)dbgBlk->contents() + ((size_t)layer * dbgTokens + slot) * bonsai::kHidden; }
@@ -41,6 +46,11 @@ private:
     MTL::Buffer *bufXs[2], *bufXp, *bufH, *bufQkv, *bufConv, *bufZ, *bufAlpha, *bufBeta, *bufGdnOut, *bufTmp, *bufPM, *bufPL, *bufPA, *bufQfull, *bufK, *bufV, *bufQ, *bufGate, *bufAttnO, *bufG, *bufU, *bufLogits, *bufTok, *bufArg;
     MTL::Buffer *sg5120, *sg6144, *sg17408, *gsAll, *gdnState, *convState, *kcache, *vcache, *dbgRes, *dbgBlk;
     uint32_t nGdn = 0, nAttn = 0;
+    MTL::Buffer *pXq, *pSx, *pStage8, *pStageSW, *bufLogitsAll;
+    // prefill buffers (rows padded to kMaxChunk)
+    MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
+    void dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
+    void dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
 
     void dGemvPtq1(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N, const char* label = "gemv");
     void dGemvBf16(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N);

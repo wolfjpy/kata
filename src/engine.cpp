@@ -47,6 +47,22 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
     bufG = gpu.alloc(17408 * 4); bufU = gpu.alloc(17408 * 4); bufLogits = gpu.alloc((size_t)kVocab * 4); bufTok = gpu.alloc(16); bufArg = gpu.alloc(16);
     gdnState = gpu.alloc((size_t)nGdn * kGdnVHeads * 128 * 128 * 4); convState = gpu.alloc((size_t)nGdn * 3 * kGdnQkvDim * 4);
     kcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * 2); vcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * 2);
+    {   // alpha|beta (bf16 [48][5120] each) -> one fp16 tile-major matrix with 128 output columns (alpha 0..47, beta 48..95, zero pad) per GDN layer
+        wabAll = gpu.alloc((size_t)nGdn * 2 * 5120 * 64 * 2); _Float16* dst = (_Float16*)wabAll->contents();
+        for (uint32_t il = 0; il < kLayers; il++) { const LayerW& L = layers[il]; if (L.isAttn) continue;
+            const uint16_t* a = (const uint16_t*)gg.bytes(L.alpha); const uint16_t* b = (const uint16_t*)gg.bytes(L.beta); _Float16* d = dst + (size_t)L.stateIdx * 2 * 5120 * 64;
+            for (uint32_t r = 0; r < 96; r++) { const uint16_t* row = r < 48 ? a + (size_t)r * 5120 : b + (size_t)(r - 48) * 5120;
+                for (uint32_t k = 0; k < 5120; k++) { uint32_t bits = (uint32_t)row[k] << 16; float f; memcpy(&f, &bits, 4); d[((size_t)(r / 64) * 5120 + k) * 64 + (r % 64)] = (_Float16)f; } } }
+    }
+    pXq = gpu.alloc((size_t)kMaxChunk * 17408); pSx = gpu.alloc((size_t)kMaxChunk * 4); pStage8 = gpu.alloc((size_t)17408 * 5120); pStageSW = gpu.alloc(4 << 20); bufLogitsAll = gpu.alloc((size_t)128 * kVocab * 4);
+    {   // batched prefill buffers
+        const size_t R = kMaxChunk;
+        pTok = gpu.alloc(R * 4); pX[0] = gpu.alloc(R * 5120 * 4); pX[1] = gpu.alloc(R * 5120 * 4); pXp = gpu.alloc(R * 17408 * 2); pHh = gpu.alloc(R * 5120 * 2);
+        pQkv = gpu.alloc(R * kGdnQkvDim * 4); pZ = gpu.alloc(R * 6144 * 4); pConv = gpu.alloc(R * kGdnQkvDim * 4); pAB = gpu.alloc(R * 128 * 4); pGb = gpu.alloc(R * 96 * 4); pQk = gpu.alloc(R * 4096 * 4); pRaw = gpu.alloc(R * 6144 * 4);
+        pGdnOut = gpu.alloc(R * 6144 * 4); pTmp = gpu.alloc(R * 5120 * 4); pQfull = gpu.alloc(R * kQProjOut * 4); pK = gpu.alloc(R * kKvDim * 4); pV = gpu.alloc(R * kKvDim * 4);
+        pQ = gpu.alloc(R * 6144 * 4); pGate = gpu.alloc(R * 6144 * 4); pAttnO = gpu.alloc(R * 6144 * 4); pG = gpu.alloc(R * 17408 * 4); pU = gpu.alloc(R * 17408 * 4);
+        pStage = gpu.alloc((size_t)17408 * 5120 * 2); pPM = gpu.alloc(256 * 24 * 8 * 4); pPL = gpu.alloc(256 * 24 * 8 * 4); pPA = gpu.alloc((size_t)256 * 24 * 8 * 256 * 4);
+    }
     if (dbgTokens) { dbgRes = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); dbgBlk = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); }
     return true;
 }
@@ -142,5 +158,115 @@ int Engine::step(int token, uint32_t pos, int dbgSlot, bool wantLogits) {
     }
     e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
     if (cb->status() != MTL::CommandBufferStatusCompleted) { fprintf(stderr, "GPU command buffer failed: %s\n", cb->error() ? cb->error()->localizedDescription()->utf8String() : "?"); exit(1); }
+    int r = wantLogits ? *(int*)bufArg->contents() : -1; pool->release(); return r;
+}
+
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// Batched prefill (path A: exact fp16). Weights are expanded to fp16 on the GPU matrix by matrix, then multiplied by the matrix unit.
+void Engine::dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N) {
+    if (sk("p_gemm")) return;
+    uint32_t dims[4] = {Mpad, N, K, 0};
+    e->setComputePipelineState(gpu.pipe("k_gemm_f16")); e->setBuffer(A, 0, 0); e->setBuffer(B, bOff, 1); e->setBuffer(C, 0, 2); e->setBytes(dims, 16, 3);
+    e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 32, 1), MTL::Size(32, 1, 1));
+}
+void Engine::dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N) {
+    if (int8Mode) {
+        if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe("k_expand_i8")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
+        if (!sk("p_gemm")) { uint32_t dims[4] = {Mpad, N, K, 0}; e->setComputePipelineState(gpu.pipe("k_gemm_i8")); e->setBuffer(pXq, 0, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBuffer(pSx, 0, 3); e->setBuffer(C, 0, 4); e->setBytes(dims, 16, 5); e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 64, 1), MTL::Size(128, 1, 1)); }
+        return;
+    }
+    if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe("k_expand_ptq1")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage, 0, 1); e->setBytes(&K, 4, 2);
+        e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
+    dGemm(e, A, pStage, 0, C, Mpad, K, N);
+}
+
+int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, bool wantLogits, uint32_t nLogits) {
+    if (M == 0 || M > kMaxChunk) { fprintf(stderr, "prefill: bad chunk size %u\n", M); exit(1); }
+    NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    memcpy(pTok->contents(), toks, M * 4);
+    const uint32_t H = kHidden, Mpad32 = (M + 31) / 32 * 32, Mpad = int8Mode ? (M + 63) / 64 * 64 : Mpad32;
+    MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
+    int c = 0;
+    auto quant = [&](uint32_t K) { if (!int8Mode || sk("p_quant")) return; e->setComputePipelineState(gpu.pipe("k_quant_rows")); e->setBuffer(pXp, 0, 0); e->setBuffer(pXq, 0, 1); e->setBuffer(pSx, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1)); };
+    if (!sk("p_embed")) { e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(pTok, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(pX[0], 0, 3); e->dispatchThreadgroups(MTL::Size(5, M, 1), MTL::Size(256, 1, 1)); }
+    auto fusedNorm = [&](MTL::Buffer* x, MTL::Buffer* y, uint64_t gsOff, MTL::Buffer* xnew, uint64_t gammaOff, bool wantH) {
+        if (sk("p_norm")) return;
+        uint32_t flags = (y ? 1u : 0u) | (wantH ? 2u : 0u);
+        e->setComputePipelineState(gpu.pipe("k_add_rms_fwht_t")); e->setBuffer(x, 0, 0); e->setBuffer(y ? y : x, 0, 1); e->setBuffer(gsAll, gsOff, 2); e->setBuffer(pXp, 0, 3);
+        e->setBuffer(xnew, 0, 4); e->setBuffer(wbuf, gammaOff, 5); e->setBuffer(pHh, 0, 6); e->setBytes(&flags, 4, 7);
+        e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1));
+        quant(5120);
+    };
+    auto fwhtB = [&](MTL::Buffer* src, MTL::Buffer* src2, MTL::Buffer* sgn, uint32_t W, uint32_t mode) {
+        if (sk("p_fwht")) return;
+        e->setComputePipelineState(gpu.pipe("k_rms_fwht_b")); e->setBuffer(src, 0, 0); e->setBuffer(src2 ? src2 : src, 0, 1); e->setBuffer(sgn, 0, 2); e->setBuffer(pXp, 0, 3); e->setBytes(&W, 4, 4); e->setBytes(&mode, 4, 5);
+        e->dispatchThreadgroups(MTL::Size(W / 1024, M, 1), MTL::Size(256, 1, 1));
+        quant(W);
+    };
+    fusedNorm(pX[c], nullptr, 0, pX[c ^ 1], layers[0].attnNorm, !layers[0].isAttn); c ^= 1;
+    for (uint32_t il = 0; il < kLayers; il++) {
+        const LayerW& L = layers[il];
+        if (!L.isAttn) {
+            const uint32_t si = (uint32_t)L.stateIdx; const uint64_t cOff = (uint64_t)si * 3 * kGdnQkvDim * 4;
+            dExpandGemm(e, L.qkv, pXp, pQkv, Mpad, H, kGdnQkvDim);
+            dExpandGemm(e, L.gate, pXp, pZ, Mpad, H, kGdnZDim);
+            if (!sk("p_gdn_ab")) dGemm(e, pHh, wabAll, (uint64_t)si * 2 * 5120 * 64 * 2, pAB, Mpad32, H, 128);
+            if (!sk("p_gdn_conv")) { e->setComputePipelineState(gpu.pipe("k_gdn_conv_t")); e->setBuffer(pQkv, 0, 0); e->setBuffer(convState, cOff, 1); e->setBuffer(wbuf, L.conv, 2); e->setBuffer(pConv, 0, 3); e->setBytes(&M, 4, 4);
+              e->dispatchThreads(MTL::Size(kGdnQkvDim / 4, (M + 15) / 16, 1), MTL::Size(64, 1, 1));
+              e->setComputePipelineState(gpu.pipe("k_gdn_conv_state")); e->setBuffer(pQkv, 0, 0); e->setBuffer(convState, cOff, 1); e->setBytes(&M, 4, 2);
+              e->dispatchThreads(MTL::Size(kGdnQkvDim, 1, 1), MTL::Size(256, 1, 1)); }
+            if (!sk("p_gdn_step")) {
+                e->setComputePipelineState(gpu.pipe("k_gdn_qk_b")); e->setBuffer(pConv, 0, 0); e->setBuffer(pQk, 0, 1); e->dispatchThreadgroups(MTL::Size(M, 32, 1), MTL::Size(128, 1, 1));
+                e->setComputePipelineState(gpu.pipe("k_gdn_gates_b")); e->setBuffer(pAB, 0, 0); e->setBuffer(wbuf, L.ssmA, 1); e->setBuffer(wbuf, L.dt, 2); e->setBuffer(pGb, 0, 3); e->setBytes(&M, 4, 4); e->dispatchThreads(MTL::Size(M * 48, 1, 1), MTL::Size(256, 1, 1));
+                e->setComputePipelineState(gpu.pipe("k_gdn_rec_b2")); e->setBuffer(pConv, 0, 0); e->setBuffer(pQk, 0, 1); e->setBuffer(pGb, 0, 2); e->setBuffer(gdnState, (uint64_t)si * kGdnVHeads * 128 * 128 * 4, 3); e->setBuffer(pRaw, 0, 4); e->setBytes(&M, 4, 5);
+                e->dispatchThreadgroups(MTL::Size(kGdnVHeads, 16, 1), MTL::Size(32, 1, 1));
+                e->setComputePipelineState(gpu.pipe("k_gdn_gnorm_b")); e->setBuffer(pRaw, 0, 0); e->setBuffer(pZ, 0, 1); e->setBuffer(wbuf, L.ssmNorm, 2); e->setBuffer(pGdnOut, 0, 3); e->dispatchThreadgroups(MTL::Size(M, 48, 1), MTL::Size(128, 1, 1));
+            }
+            fwhtB(pGdnOut, nullptr, sg6144, 6144, 2);
+            dExpandGemm(e, L.ssmOut, pXp, pTmp, Mpad, 6144, H);
+        } else {
+            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = (uint64_t)ai * maxCtx * kKvDim * 2;
+            dExpandGemm(e, L.wq, pXp, pQfull, Mpad, H, kQProjOut);
+            dExpandGemm(e, L.wk, pXp, pK, Mpad, H, kKvDim);
+            dExpandGemm(e, L.wv, pXp, pV, Mpad, H, kKvDim);
+            if (!sk("p_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
+              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9);
+              e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
+            if (!sk("p_attn")) for (uint32_t base = 0; base < M; base += 256) {
+                const uint32_t mt = std::min<uint32_t>(256, M - base), posBase = pos0 + base, S = 8;
+                e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, (uint64_t)base * 6144 * 4, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&posBase, 4, 6);
+                e->dispatchThreadgroups(MTL::Size(S, kKvHeads, mt), MTL::Size(256, 1, 1));
+                e->setComputePipelineState(gpu.pipe("k_attn_combine_b")); e->setBuffer(pPM, 0, 0); e->setBuffer(pPL, 0, 1); e->setBuffer(pPA, 0, 2); e->setBuffer(pGate, (uint64_t)base * 6144 * 4, 3); e->setBuffer(pAttnO, (uint64_t)base * 6144 * 4, 4); e->setBytes(&S, 4, 5);
+                e->dispatchThreadgroups(MTL::Size(kHeads, mt, 1), MTL::Size(256, 1, 1));
+            }
+            fwhtB(pAttnO, nullptr, sg6144, 6144, 3);
+            dExpandGemm(e, L.wo, pXp, pTmp, Mpad, 6144, H);
+        }
+        if (dbgBase >= 0) dCopy(e, pTmp, dbgBlk, ((uint64_t)il * dbgTokens + dbgBase) * H * 4, M * H);
+        fusedNorm(pX[c], pTmp, (uint64_t)(il * 2 + 1) * H * 4, pX[c ^ 1], layers[il].postNorm, false); c ^= 1;
+        dExpandGemm(e, L.ffnGate, pXp, pG, Mpad, H, kFfn);
+        dExpandGemm(e, L.ffnUp, pXp, pU, Mpad, H, kFfn);
+        fwhtB(pG, pU, sg17408, kFfn, 1);
+        dExpandGemm(e, L.ffnDown, pXp, pTmp, Mpad, kFfn, H);
+        if (il + 1 < kLayers) { fusedNorm(pX[c], pTmp, (uint64_t)((il + 1) * 2) * H * 4, pX[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn); }
+        else { uint32_t n = M * H; e->setComputePipelineState(gpu.pipe("k_add2")); e->setBuffer(pX[c], 0, 0); e->setBuffer(pTmp, 0, 1); e->setBuffer(pX[c ^ 1], 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
+        c ^= 1;
+        if (dbgBase >= 0) dCopy(e, pX[c], dbgRes, ((uint64_t)il * dbgTokens + dbgBase) * H * 4, M * H);
+    }
+    if (wantLogits) {   // the last nLogits tokens -> final norm -> lm_head (decode-style kernels); slot j of bufLogitsAll holds the logits of token M-nl+j
+        const uint32_t nl = std::min<uint32_t>(std::min<uint32_t>(nLogits ? nLogits : 1, M), 128);
+        for (uint32_t j = 0; j < nl; j++) {
+            uint32_t flags = 0; const uint64_t rowOff = (uint64_t)(M - nl + j) * H * 4;
+            e->setComputePipelineState(gpu.pipe("k_add_rms_fwht")); e->setBuffer(pX[c], rowOff, 0); e->setBuffer(pX[c], rowOff, 1); e->setBuffer(gsAll, (uint64_t)(kLayers * 2) * H * 4, 2); e->setBuffer(bufXp, 0, 3);
+            e->setBuffer(bufXs[0], 0, 4); e->setBuffer(wbuf, outNorm, 5); e->setBuffer(bufH, 0, 6); e->setBytes(&flags, 4, 7); e->dispatchThreadgroups(MTL::Size(5, 1, 1), MTL::Size(256, 1, 1));
+            uint32_t K = H, N = kVocab; e->setComputePipelineState(gpu.pipe("k_gemv_v1_nr4_sg4")); e->setBuffer(wbuf, outW, 0); e->setBuffer(bufXp, 0, 1); e->setBuffer(bufLogitsAll, (uint64_t)j * kVocab * 4, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4);
+            e->dispatchThreadgroups(MTL::Size((N + 15) / 16, 1, 1), MTL::Size(128, 1, 1));
+        }
+        uint32_t n = kVocab; e->setComputePipelineState(gpu.pipe("k_argmax")); e->setBuffer(bufLogitsAll, (uint64_t)(nl - 1) * kVocab * 4, 0); e->setBuffer(bufArg, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreadgroups(MTL::Size(1, 1, 1), MTL::Size(1024, 1, 1));
+    }
+    e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+    if (cb->status() != MTL::CommandBufferStatusCompleted) { fprintf(stderr, "GPU command buffer failed: %s\n", cb->error() ? cb->error()->localizedDescription()->utf8String() : "?"); exit(1); }
+    if (wantLogits) { const uint32_t nl = std::min<uint32_t>(std::min<uint32_t>(nLogits ? nLogits : 1, M), 128); memcpy(bufLogits->contents(), (const float*)bufLogitsAll->contents() + (size_t)(nl - 1) * kVocab, (size_t)kVocab * 4); }
     int r = wantLogits ? *(int*)bufArg->contents() : -1; pool->release(); return r;
 }
