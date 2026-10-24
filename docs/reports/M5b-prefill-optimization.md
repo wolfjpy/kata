@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 精确 fp16,512 token | — | **245 tok/s** | 208 tok/s(pp512) |
 | 精确 fp16,1024 token chunk | 177 tok/s | **257 tok/s**(+45%) | |
-| 精确 fp16,7.3K token 提示 | 164 tok/s(标量注意力 + N 优先) | **213 tok/s**(+30%) | |
+| 精确 fp16,7.3K token 提示 | 164 tok/s(已有 flash attention,旧 GEMM 顺序) | **213 tok/s**(+30%) | |
 | int8(`--fast`,opt-in),1024 chunk | 278 tok/s | 270–283 tok/s(已无明显优势) | |
 | int8,7.3K 提示 | 176 tok/s(标量注意力) | 232 tok/s | |
 
