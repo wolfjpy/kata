@@ -5,6 +5,7 @@
 #include "bonsai_m6.h"
 #include <string>
 #include <vector>
+#include <cstring>
 
 struct LayerW {
     bool isAttn = false;
@@ -41,6 +42,16 @@ public:
     const float* hidden() const { return (const float*)bufH->contents(); }
     // Runs R (<= 2) MTP rows: row r pairs hidden state hin[r] with token toks[r] at position pos0 + r. Returns the greedy token predicted after the last row (logits in logits()).
     int mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits = true);
+    // Feeds n tokens at positions [pos0, pos0+n) (stepwise for short runs, batched prefill otherwise), keeps the MTP K/V cache current when mtpTrack is set, returns the greedy next token.
+    bool mtpTrack = false;
+    int feed(const int* toks, uint32_t n, uint32_t pos0, bool wantLogits = true);
+    const float* hPrev() const { return (const float*)hPrevBuf->contents(); }                       // hidden state of the last fed position
+    void setHPrev(const float* h) { memcpy(hPrevBuf->contents(), h, kHiddenBytes); }
+    // Speculative verification: runs 2 tokens (positions pos, pos+1) through the main model in one pass. Both GDN states (after token 0 and after token 1) are kept; commit2() picks one.
+    void verify2(const int* toks, uint32_t pos, int* argmaxOut);
+    void commit2(bool acceptBoth);
+    const float* verifyLogits(int row) const { return (const float*)bufLogitsAll->contents() + (size_t)row * bonsai::kVocab; }
+    void verifyHidden(int row, float* dst) const;   // post-final-norm hidden state of verified token `row`
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
@@ -57,6 +68,9 @@ private:
     MTL::Buffer *pXq, *pSx, *pStage8, *pStageSW, *bufLogitsAll;
     // prefill buffers (rows padded to kMaxChunk)
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
+    static constexpr size_t kHiddenBytes = 5120 * 4;
+    MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
+    void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
     void loadMtp();
     void dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
     void dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);

@@ -30,13 +30,14 @@ static void klStats(const char* label, const float* ref, const float* mine, size
 #include "cli.h"
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "verify-check") return cmdVerifyCheck(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "mtp-eval") return cmdMtpEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
     if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
-    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false;
+    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
-        if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]);
+        if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--verify") verifyN = atoi(argv[++i]);
         else if (a == "--ref-dir") refDir = argv[++i]; else if (a == "--ref-logits") refLogits = argv[++i]; else if (a == "--ctx") ctx = atoi(argv[++i]); else if (a == "--skip") skipArg = argv[++i];
         else if (a == "--prefill") usePrefill = true; else if (a == "--repeat") repeat = atoi(argv[++i]); else if (a == "--int8") int8 = true; else if (a == "--nlogits") nlogits = atoi(argv[++i]);
         else if (a == "--dump-logits") dumpLogits = argv[++i]; else if (a == "--cmp-logits") cmpLogits = argv[++i];
@@ -91,6 +92,13 @@ int main(int argc, char** argv) {
         auto g0 = std::chrono::steady_clock::now();
         for (int g = 0; g < gen; g++) { printf("gen[%d] = %d\n", g, next); next = eng.step(next, (uint32_t)(ntok + g)); }
         double gdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - g0).count(); printf("decode: %d tokens in %.3f s = %.2f tok/s (%.1f ms/token)\n", gen, gdt, gen / gdt, gdt / gen * 1e3);
+    }
+    if (verifyN > 0) {   // timing of the 2-token verification pass (state is not advanced meaningfully; results only valid without --skip)
+        const int vt[2] = {next, next}; int am[2];
+        eng.verify2(vt, (uint32_t)ntok, am);
+        auto v0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < verifyN; i++) { eng.verify2(vt, (uint32_t)ntok, am); eng.commit2(false); }
+        double vdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - v0).count(); printf("verify2: %d passes in %.3f s = %.2f ms/pass\n", verifyN, vdt, vdt / verifyN * 1e3);
     }
     return 0;
 }

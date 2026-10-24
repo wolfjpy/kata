@@ -80,9 +80,30 @@ attn_out = Wo · H(s6144 ⊙ out)
 
 见 `docs/reference/prism_ptq1_0_quant_dequant.c` 和 CHECKPOINT §5.6。一行 K 个输入 = K/128 个 28 字节块;反量化值 `(trit-1) * d`。元素在块内的顺序:`qs[m] 的第 n 个 trit → 元素 n*16+m (m<16)`;`qs[16+m] → 80+n*8+m (m<8)`;`qh[h] 的第 n 个 trit → 120+n*2+h`。
 
-## 8. MTP 层(blk.64,Q8_0)
+## 8. MTP 层(blk.64,Q8_0)——已核实(M4)
 
-(尚未核实,M4 时读 `prism_qwen35_graph.cpp` 的 `graph_mtp::build_chain`。)
+MTP 头是**一个完整的全注意力块**,权重为 Q8_0(34 字节/块:fp16 scale + 32 个 int8),**没有 Hadamard 旋转**,有自己的 K/V 缓存(只有一层)。
+
+第 `j` 行 MTP 计算"位置 `j` 的 token `x_j`"与"主干在位置 `j-1` 的隐状态 `h_{j-1}`"的配对,预测位置 `j+1` 的 token:
+
+```
+e   = embedding(x_j)                       # 与主干相同:s ⊙ (H z),旋转基的反变换
+h   = output_norm(trunk residual at j-1)   # 主干最后一层之后、output_norm(含 γ)之后的"平坦"隐状态
+cat = [ RMSNorm(e) * nextn.enorm | RMSNorm(h) * nextn.hnorm ]      # 10240
+x   = eh_proj · cat                        # Q8_0,10240 -> 5120
+a   = RMSNorm(x) * attn_norm               # 普通 RMSNorm,没有 sign/FWHT
+q,k,v = Q8 matmuls of a                    # 与主干注意力同样的 [query|gate] 布局、逐头 q/k norm、partial RoPE(位置 j)、sigmoid 门
+y   = x + attn_out(Q8, 6144 -> 5120)
+f   = RMSNorm(y) * post_attention_norm
+z   = y + ffn_down(silu(ffn_gate f) ⊙ ffn_up f)                    # Q8_0,5120 -> 17408 -> 5120
+logits = lm_head( shared_head_norm(z) )    # 与主干共用 output.weight(旋转基),所以这里要做 sign + FWHT
+```
+
+要点:
+- 位置 0 没有 MTP 行(没有 `h_{-1}`),所以 MTP 缓存的第一个有效位置是 1(`firstPos = 1`)。
+- 预填充时 MTP 缓存只需要 K/V(不需要 FFN、不需要 logits),我们用 `eh_proj`、`wk`、`wv` 三个 GEMM 批量完成(`Engine::encMtpKv`)。
+- 草稿的深度 1:用 `next`(已采样、尚未喂入)与 `h_{n-1}` 预测 `n+1` 位置的 token。
+- 数值验证:在主模型自己的贪心续写上,MTP 的 top-1 命中率 62–65%(若公式有误只会是 ~5%)。
 
 ## 9. 验证状态
 

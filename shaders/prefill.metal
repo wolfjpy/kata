@@ -80,13 +80,14 @@ kernel void k_rms_fwht_b(device const float* src [[buffer(0)]], device const flo
     uint base = blk * 1024 + tid * 4; float vals[4];
     for (uint r = 0; r < 4; r++) {
         uint idx = base + r; float v;
-        if (mode == 1) { float g = src[ro + idx]; v = silu(g) * src2[ro + idx] * gs[idx]; }
-        else if (mode == 2) { uint h = idx & 127u; uint tt = idx >> 7; uint rr = tt % 3u; uint k = tt / 3u; v = src[ro + h + 128u * (k + 16u * rr)] * gs[idx]; }
+        if ((mode & 7u) == 1) { float g = src[ro + idx]; v = silu(g) * src2[ro + idx] * gs[idx]; }
+        else if ((mode & 7u) == 2) { uint h = idx & 127u; uint tt = idx >> 7; uint rr = tt % 3u; uint k = tt / 3u; v = src[ro + h + 128u * (k + 16u * rr)] * gs[idx]; }
         else v = src[ro + idx] * gs[idx];
         vals[r] = v;
     }
     float4 o = fwht1024(float4(vals[0], vals[1], vals[2], vals[3]), tid, lane, xs);
-    out[ro + base] = half(o.x); out[ro + base + 1] = half(o.y); out[ro + base + 2] = half(o.z); out[ro + base + 3] = half(o.w);
+    if (mode & 8u) { out[base * 2 + t] = half(o.x); out[(base + 1) * 2 + t] = half(o.y); out[(base + 2) * 2 + t] = half(o.z); out[(base + 3) * 2 + t] = half(o.w); }   // [K] of half2 (two verified tokens)
+    else { out[ro + base] = half(o.x); out[ro + base + 1] = half(o.y); out[ro + base + 2] = half(o.z); out[ro + base + 3] = half(o.w); }
 }
 
 kernel void k_add2(device const float* x [[buffer(0)]], device const float* y [[buffer(1)]], device float* out [[buffer(2)]], constant uint& n [[buffer(3)]], uint i [[thread_position_in_grid]]) { if (i < n) out[i] = x[i] + y[i]; }
@@ -270,7 +271,8 @@ kernel void k_add_rms_fwht_t(device const float* x [[buffer(0)]], device const f
         uint base = blk * 1024 + tid * 4; float vals[4];
         for (uint r = 0; r < 4; r++) { uint idx = base + r; vals[r] = v[idx] * inv * gs[idx]; if (flags & 2u) hout[ro + idx] = half(v[idx] * inv * gamma[idx]); }
         float4 o = fwht1024(float4(vals[0], vals[1], vals[2], vals[3]), tid, lane, xs);
-        out[ro + base] = half(o.x); out[ro + base + 1] = half(o.y); out[ro + base + 2] = half(o.z); out[ro + base + 3] = half(o.w);
+        if (flags & 4u) { out[(base) * 2 + t] = half(o.x); out[(base + 1) * 2 + t] = half(o.y); out[(base + 2) * 2 + t] = half(o.z); out[(base + 3) * 2 + t] = half(o.w); }   // two-token verify: [K] of half2
+        else { out[ro + base] = half(o.x); out[ro + base + 1] = half(o.y); out[ro + base + 2] = half(o.z); out[ro + base + 3] = half(o.w); }
     }
 }
 
