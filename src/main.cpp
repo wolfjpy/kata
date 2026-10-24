@@ -30,6 +30,7 @@ static void klStats(const char* label, const float* ref, const float* mine, size
 #include "cli.h"
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "mtp-eval") return cmdMtpEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
     if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
     std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false;

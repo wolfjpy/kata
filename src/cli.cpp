@@ -93,3 +93,24 @@ int cmdRun(int argc, char** argv, bool interactive) {
     }
     return 0;
 }
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// bonsai mtp-eval: how often does the MTP head predict the main model's greedy continuation?
+int cmdMtpEval(int argc, char** argv) {
+    std::string model, ids, metallib = "build/bonsai.metallib"; int gen = 96;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
+    std::vector<int> X; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); X.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
+    Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; if (!eng.hasMtp) { fprintf(stderr, "model has no MTP block\n"); return 1; } eng.saveHidden = true;
+    const size_t P = X.size(); std::vector<std::vector<float>> H;   // H[j] = plain output-normalised hidden state after processing position j
+    int next = 0;
+    for (size_t i = 0; i < P; i++) { next = eng.step(X[i], (uint32_t)i, -1, true); H.emplace_back(eng.hidden(), eng.hidden() + 5120); }
+    for (int g = 0; g < gen; g++) { X.push_back(next); next = eng.step(next, (uint32_t)(X.size() - 1), -1, true); H.emplace_back(eng.hidden(), eng.hidden() + 5120); }
+    // X has P + gen tokens whose hidden states are all in H (the final `next` is not part of X)
+    size_t hitPrompt = 0, nPrompt = 0, hitGen = 0, nGen = 0;
+    for (size_t j = 1; j + 1 < X.size(); j++) {
+        int tok = X[j]; int pred = eng.mtpRows(1, &tok, H[j - 1].data(), (uint32_t)j, true);
+        bool hit = pred == X[j + 1]; if (j + 1 < P) { nPrompt++; hitPrompt += hit; } else { nGen++; hitGen += hit; }
+    }
+    printf("MTP depth-1 top-1 match: on the given prompt %zu/%zu (%.1f%%), on the main model's greedy continuation %zu/%zu (%.1f%%)\n", hitPrompt, nPrompt, 100.0 * hitPrompt / std::max<size_t>(1, nPrompt), hitGen, nGen, 100.0 * hitGen / std::max<size_t>(1, nGen));
+    return 0;
+}

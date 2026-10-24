@@ -36,7 +36,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
     auto mk = [&](size_t off, size_t n) { MTL::Buffer* b = gpu.alloc(n * 4); float* p = (float*)b->contents(); for (size_t i = 0; i < n; i++) p[i] = (float)vals[off + i]; return b; };
     sg5120 = mk(0, 5120); sg6144 = mk(5120, 6144); sg17408 = mk(5120 + 6144, 17408);
     const float* s5120 = (const float*)sg5120->contents();
-    gsAll = gpu.alloc((size_t)(kLayers * 2 + 1) * kHidden * 4); float* gs = (float*)gsAll->contents();
+    gsAll = gpu.alloc((size_t)(kLayers * 2 + 2) * kHidden * 4); float* gs = (float*)gsAll->contents();
     auto fold = [&](uint64_t off, float* dst) { const float* g = (const float*)gg.bytes(off); for (uint32_t i = 0; i < kHidden; i++) dst[i] = g[i] * s5120[i]; };
     for (uint32_t il = 0; il < kLayers; il++) { fold(layers[il].attnNorm, gs + (size_t)(il * 2) * kHidden); fold(layers[il].postNorm, gs + (size_t)(il * 2 + 1) * kHidden); }
     fold(outNorm, gs + (size_t)(kLayers * 2) * kHidden);
@@ -64,6 +64,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
         pStage = gpu.alloc((size_t)17408 * 5120 * 2); pPM = gpu.alloc(256 * 24 * 8 * 4); pPL = gpu.alloc(256 * 24 * 8 * 4); pPA = gpu.alloc((size_t)256 * 24 * 8 * 256 * 4);
     }
     if (dbgTokens) { dbgRes = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); dbgBlk = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); }
+    loadMtp();
     return true;
 }
 
@@ -148,7 +149,7 @@ int Engine::step(int token, uint32_t pos, int dbgSlot, bool wantLogits) {
         dRmsFwht(e, bufG, bufU, sg17408, 0, bufXp, kFfn, 1);
         dGemvPtq1(e, L.ffnDown, bufXp, bufTmp, kFfn, H, "gemv_down");
         if (il + 1 < kLayers) fusedNorm(bufXs[c], bufTmp, (uint64_t)((il + 1) * 2) * H * 4, bufXs[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn);   // FFN residual + next layer's input norm
-        else fusedNorm(bufXs[c], bufTmp, (uint64_t)(kLayers * 2) * H * 4, bufXs[c ^ 1], layers[il].postNorm, false);                                         // FFN residual + final norm
+        else fusedNorm(bufXs[c], bufTmp, (uint64_t)(kLayers * 2) * H * 4, bufXs[c ^ 1], outNorm, saveHidden);                                         // FFN residual + final norm
         c ^= 1;
         if (dbgSlot >= 0) dCopy(e, bufXs[c], dbgRes, ((uint64_t)il * dbgTokens + dbgSlot) * H * 4, H);
     }
@@ -231,11 +232,11 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
             dExpandGemm(e, L.wk, pXp, pK, Mpad, H, kKvDim);
             dExpandGemm(e, L.wv, pXp, pV, Mpad, H, kKvDim);
             if (!sk("p_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
-              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9);
+              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9); { uint32_t h00 = 0; e->setBytes(&h00, 4, 10); }
               e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
             if (!sk("p_attn")) for (uint32_t base = 0; base < M; base += 256) {
                 const uint32_t mt = std::min<uint32_t>(256, M - base), posBase = pos0 + base, S = 8;
-                e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, (uint64_t)base * 6144 * 4, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&posBase, 4, 6);
+                e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, (uint64_t)base * 6144 * 4, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&posBase, 4, 6); { uint32_t fp0 = 0; e->setBytes(&fp0, 4, 7); }
                 e->dispatchThreadgroups(MTL::Size(S, kKvHeads, mt), MTL::Size(256, 1, 1));
                 e->setComputePipelineState(gpu.pipe("k_attn_combine_b")); e->setBuffer(pPM, 0, 0); e->setBuffer(pPL, 0, 1); e->setBuffer(pPA, 0, 2); e->setBuffer(pGate, (uint64_t)base * 6144 * 4, 3); e->setBuffer(pAttnO, (uint64_t)base * 6144 * 4, 4); e->setBytes(&S, 4, 5);
                 e->dispatchThreadgroups(MTL::Size(kHeads, mt, 1), MTL::Size(256, 1, 1));
@@ -268,5 +269,63 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
     e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
     if (cb->status() != MTL::CommandBufferStatusCompleted) { fprintf(stderr, "GPU command buffer failed: %s\n", cb->error() ? cb->error()->localizedDescription()->utf8String() : "?"); exit(1); }
     if (wantLogits) { const uint32_t nl = std::min<uint32_t>(std::min<uint32_t>(nLogits ? nLogits : 1, M), 128); memcpy(bufLogits->contents(), (const float*)bufLogitsAll->contents() + (size_t)(nl - 1) * kVocab, (size_t)kVocab * 4); }
+    int r = wantLogits ? *(int*)bufArg->contents() : -1; pool->release(); return r;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// MTP head: bind the Q8_0 block and allocate its cache and scratch buffers (called from load()).
+void Engine::loadMtp() {
+    auto has = [&](const char* n) { return gg.tensors.count(n) > 0; };
+    if (!has("blk.64.nextn.eh_proj.weight")) { hasMtp = false; return; }
+    hasMtp = true; auto T = [&](const char* n) { return gg.tensor(n).fileOffset; };
+    mtp.ehProj = T("blk.64.nextn.eh_proj.weight"); mtp.enorm = T("blk.64.nextn.enorm.weight"); mtp.hnorm = T("blk.64.nextn.hnorm.weight"); mtp.headNorm = T("blk.64.nextn.shared_head_norm.weight");
+    mtp.attnNorm = T("blk.64.attn_norm.weight"); mtp.postNorm = T("blk.64.post_attention_norm.weight"); mtp.wq = T("blk.64.attn_q.weight"); mtp.wk = T("blk.64.attn_k.weight"); mtp.wv = T("blk.64.attn_v.weight");
+    mtp.wo = T("blk.64.attn_output.weight"); mtp.qNorm = T("blk.64.attn_q_norm.weight"); mtp.kNorm = T("blk.64.attn_k_norm.weight"); mtp.ffnGate = T("blk.64.ffn_gate.weight"); mtp.ffnUp = T("blk.64.ffn_up.weight"); mtp.ffnDown = T("blk.64.ffn_down.weight");
+    const size_t R = 4;
+    mK = gpu.alloc((size_t)maxCtx * kKvDim * 2); mV = gpu.alloc((size_t)maxCtx * kKvDim * 2); mTok = gpu.alloc(R * 4); mE = gpu.alloc(R * 5120 * 4); mHin = gpu.alloc(R * 5120 * 4); mCat = gpu.alloc(R * 10240 * 4);
+    mX = gpu.alloc(R * 5120 * 4); mH = gpu.alloc(R * 5120 * 4); mQfull = gpu.alloc(R * kQProjOut * 4); mKp = gpu.alloc(R * kKvDim * 4); mVp = gpu.alloc(R * kKvDim * 4); mQ = gpu.alloc(R * 6144 * 4); mGate = gpu.alloc(R * 6144 * 4);
+    mAttnO = gpu.alloc(R * 6144 * 4); mTmp = gpu.alloc(R * 5120 * 4); mY = gpu.alloc(R * 5120 * 4); mG = gpu.alloc(R * 17408 * 4); mU = gpu.alloc(R * 17408 * 4); mPM = gpu.alloc(R * 24 * 8 * 4); mPL = gpu.alloc(R * 24 * 8 * 4); mPA = gpu.alloc(R * 24 * 8 * 256 * 4);
+    // shared head norm folded with the sign vector (index 2*kLayers + 1 of gsAll)
+    float* gs = (float*)gsAll->contents() + (size_t)(kLayers * 2 + 1) * kHidden; const float* s5120 = (const float*)sg5120->contents(); const float* g = (const float*)gg.bytes(mtp.headNorm);
+    for (uint32_t i = 0; i < kHidden; i++) gs[i] = g[i] * s5120[i];
+}
+
+int Engine::mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits) {
+    if (!hasMtp || R == 0 || R > 2) { fprintf(stderr, "mtpRows: bad call\n"); exit(1); }
+    NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    memcpy(mTok->contents(), toks, R * 4); memcpy(mHin->contents(), hin, (size_t)R * 5120 * 4);
+    const uint32_t H = kHidden; const std::string tn = R == 1 ? "k_gemv_q8_t1" : "k_gemv_q8_t2";
+    MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
+    auto gq = [&](uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N) { e->setComputePipelineState(gpu.pipe(tn.c_str())); e->setBuffer(wbuf, off, 0); e->setBuffer(x, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4); e->dispatchThreadgroups(MTL::Size((N + 7) / 8, 1, 1), MTL::Size(256, 1, 1)); };
+    auto rows = [&](MTL::Buffer* src, uint64_t wOff, MTL::Buffer* out) { uint32_t w = H; e->setComputePipelineState(gpu.pipe("k_rmsnorm_rows")); e->setBuffer(src, 0, 0); e->setBuffer(wbuf, wOff, 1); e->setBuffer(out, 0, 2); e->setBytes(&w, 4, 3); e->dispatchThreadgroups(MTL::Size(R, 1, 1), MTL::Size(256, 1, 1)); };
+    auto add = [&](MTL::Buffer* a, MTL::Buffer* b, MTL::Buffer* out, uint32_t n) { e->setComputePipelineState(gpu.pipe("k_add3")); e->setBuffer(a, 0, 0); e->setBuffer(b, 0, 1); e->setBuffer(out, 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); };
+    { e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(mTok, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(mE, 0, 3); e->dispatchThreadgroups(MTL::Size(5, R, 1), MTL::Size(256, 1, 1)); }
+    { e->setComputePipelineState(gpu.pipe("k_mtp_cat")); e->setBuffer(mE, 0, 0); e->setBuffer(mHin, 0, 1); e->setBuffer(wbuf, mtp.enorm, 2); e->setBuffer(wbuf, mtp.hnorm, 3); e->setBuffer(mCat, 0, 4); e->dispatchThreadgroups(MTL::Size(R, 1, 1), MTL::Size(256, 1, 1)); }
+    gq(mtp.ehProj, mCat, mX, 10240, H);
+    rows(mX, mtp.attnNorm, mH);
+    gq(mtp.wq, mH, mQfull, H, kQProjOut); gq(mtp.wk, mH, mKp, H, kKvDim); gq(mtp.wv, mH, mVp, H, kKvDim);
+    { uint32_t h00 = 0; e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(mQfull, 0, 0); e->setBuffer(mKp, 0, 1); e->setBuffer(mVp, 0, 2); e->setBuffer(wbuf, mtp.qNorm, 3); e->setBuffer(wbuf, mtp.kNorm, 4);
+      e->setBuffer(mQ, 0, 5); e->setBuffer(mGate, 0, 6); e->setBuffer(mK, 0, 7); e->setBuffer(mV, 0, 8); e->setBytes(&pos0, 4, 9); e->setBytes(&h00, 4, 10); e->dispatchThreadgroups(MTL::Size(32, R, 1), MTL::Size(256, 1, 1)); }
+    { uint32_t S = std::min<uint32_t>(8, std::max<uint32_t>(1, (pos0 + R) / 64)), first = 1;
+      e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(mQ, 0, 0); e->setBuffer(mK, 0, 1); e->setBuffer(mV, 0, 2); e->setBuffer(mPM, 0, 3); e->setBuffer(mPL, 0, 4); e->setBuffer(mPA, 0, 5); e->setBytes(&pos0, 4, 6); e->setBytes(&first, 4, 7);
+      e->dispatchThreadgroups(MTL::Size(S, kKvHeads, R), MTL::Size(256, 1, 1));
+      e->setComputePipelineState(gpu.pipe("k_attn_combine_b")); e->setBuffer(mPM, 0, 0); e->setBuffer(mPL, 0, 1); e->setBuffer(mPA, 0, 2); e->setBuffer(mGate, 0, 3); e->setBuffer(mAttnO, 0, 4); e->setBytes(&S, 4, 5);
+      e->dispatchThreadgroups(MTL::Size(kHeads, R, 1), MTL::Size(256, 1, 1)); }
+    gq(mtp.wo, mAttnO, mTmp, 6144, H);
+    add(mTmp, mX, mY, R * H);                         // attention residual (inpSA = eh_proj output)
+    rows(mY, mtp.postNorm, mH);
+    gq(mtp.ffnGate, mH, mG, H, kFfn); gq(mtp.ffnUp, mH, mU, H, kFfn);
+    { uint32_t n = R * kFfn; e->setComputePipelineState(gpu.pipe("k_swiglu")); e->setBuffer(mG, 0, 0); e->setBuffer(mU, 0, 1); e->setBuffer(mG, 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
+    gq(mtp.ffnDown, mG, mTmp, kFfn, H);
+    add(mTmp, mY, mX, R * H);                         // FFN residual -> block output (mX reused)
+    if (wantLogits) {
+        uint32_t flags = 0; const uint64_t rowOff = (uint64_t)(R - 1) * H * 4;
+        e->setComputePipelineState(gpu.pipe("k_add_rms_fwht")); e->setBuffer(mX, rowOff, 0); e->setBuffer(mX, rowOff, 1); e->setBuffer(gsAll, (uint64_t)(kLayers * 2 + 1) * H * 4, 2); e->setBuffer(bufXp, 0, 3);
+        e->setBuffer(bufXs[0], 0, 4); e->setBuffer(wbuf, mtp.headNorm, 5); e->setBuffer(bufH, 0, 6); e->setBytes(&flags, 4, 7); e->dispatchThreadgroups(MTL::Size(5, 1, 1), MTL::Size(256, 1, 1));
+        dGemvPtq1(e, outW, bufXp, bufLogits, H, kVocab, "gemv_lmhead");
+        uint32_t n = kVocab; e->setComputePipelineState(gpu.pipe("k_argmax")); e->setBuffer(bufLogits, 0, 0); e->setBuffer(bufArg, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreadgroups(MTL::Size(1, 1, 1), MTL::Size(1024, 1, 1));
+    }
+    e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+    if (cb->status() != MTL::CommandBufferStatusCompleted) { fprintf(stderr, "GPU command buffer failed (mtp): %s\n", cb->error() ? cb->error()->localizedDescription()->utf8String() : "?"); exit(1); }
     int r = wantLogits ? *(int*)bufArg->contents() : -1; pool->release(); return r;
 }

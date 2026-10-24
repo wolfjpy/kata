@@ -170,10 +170,10 @@ kernel void k_gdn_step_b(device const float* conv_out [[buffer(0)]], device cons
 kernel void k_attn_prep_b(device const float* qfull [[buffer(0)]], device const float* kproj [[buffer(1)]], device const float* vproj [[buffer(2)]],
                           device const float* qnorm [[buffer(3)]], device const float* knorm [[buffer(4)]],
                           device float* qout [[buffer(5)]], device float* gate_out [[buffer(6)]],
-                          device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos0 [[buffer(9)]],
+                          device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos0 [[buffer(9)]], constant uint& h0 [[buffer(10)]],
                           uint2 tgp [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float xs[256]; threadgroup float part[8];
-    const uint h = tgp.x, t = tgp.y; const uint pos = pos0 + t;
+    const uint h = tgp.x + h0, t = tgp.y; const uint pos = pos0 + t;
     device const float* qf = qfull + ulong(t) * 12288ul; device const float* kp = kproj + ulong(t) * 1024ul; device const float* vp = vproj + ulong(t) * 1024ul;
     device float* qo = qout + ulong(t) * 6144ul; device float* go = gate_out + ulong(t) * 6144ul;
     if (h >= 28) { uint vh = h - 28; vcache[ulong(pos) * bonsai::kKvDim + vh * 256 + tid] = half(vp[vh * 256 + tid]); return; }
@@ -200,10 +200,11 @@ kernel void k_attn_prep_b(device const float* qfull [[buffer(0)]], device const 
 kernel void k_attn_split_b(device const float* q [[buffer(0)]], device const half* kcache [[buffer(1)]], device const half* vcache [[buffer(2)]],
                            device float* pm [[buffer(3)]], device float* pl [[buffer(4)]], device float* pacc [[buffer(5)]],
                            constant uint& posBase [[buffer(6)]],      // position of the first token of this sub-batch
+                           constant uint& firstPos [[buffer(7)]],     // first valid cache position (0 for the main model, 1 for the MTP cache)
                            uint3 tg [[threadgroup_position_in_grid]], uint3 ng [[threadgroups_per_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float tm[8][6]; threadgroup float tl[8][6]; threadgroup float tacc[8][3][256];
     const uint split = tg.x, kvh = tg.y, t = tg.z, S = ng.x; const uint npos = posBase + t + 1;
-    const uint per = (npos + S - 1) / S, lo = min(split * per, npos), hi = min(lo + per, npos);
+    const uint span = npos - firstPos, per = (span + S - 1) / S, lo = firstPos + min(split * per, span), hi = min(lo + per, npos);
     const uint sper = (hi - lo + 7) / 8, slo = min(lo + sg * sper, hi), shi = min(slo + sper, hi);
     device const float* qt = q + ulong(t) * 6144ul;
     float qv[6][8];

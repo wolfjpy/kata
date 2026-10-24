@@ -35,6 +35,12 @@ public:
     static constexpr uint32_t kMaxChunk = 1024;
     // Batched prefill of M (<= kMaxChunk) tokens starting at position pos0 (exact fp16 path). Returns the greedy next token (or -1 if !wantLogits).
     int prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase = -1, bool wantLogits = true, uint32_t nLogits = 1);
+    // ---- MTP head (blk.64, Q8_0)
+    bool hasMtp = false;
+    bool saveHidden = false;   // step(): also produce the plain output-normalised hidden state (hidden())
+    const float* hidden() const { return (const float*)bufH->contents(); }
+    // Runs R (<= 2) MTP rows: row r pairs hidden state hin[r] with token toks[r] at position pos0 + r. Returns the greedy token predicted after the last row (logits in logits()).
+    int mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits = true);
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
@@ -46,9 +52,12 @@ private:
     MTL::Buffer *bufXs[2], *bufXp, *bufH, *bufQkv, *bufConv, *bufZ, *bufAlpha, *bufBeta, *bufGdnOut, *bufTmp, *bufPM, *bufPL, *bufPA, *bufQfull, *bufK, *bufV, *bufQ, *bufGate, *bufAttnO, *bufG, *bufU, *bufLogits, *bufTok, *bufArg;
     MTL::Buffer *sg5120, *sg6144, *sg17408, *gsAll, *gdnState, *convState, *kcache, *vcache, *dbgRes, *dbgBlk;
     uint32_t nGdn = 0, nAttn = 0;
+    struct MtpW { uint64_t ehProj, attnNorm, postNorm, wq, wk, wv, wo, qNorm, kNorm, ffnGate, ffnUp, ffnDown, enorm, hnorm, headNorm; } mtp{};
+    MTL::Buffer *mK, *mV, *mTok, *mE, *mHin, *mCat, *mX, *mH, *mQfull, *mKp, *mVp, *mQ, *mGate, *mAttnO, *mTmp, *mY, *mG, *mU, *mPM, *mPL, *mPA;
     MTL::Buffer *pXq, *pSx, *pStage8, *pStageSW, *bufLogitsAll;
     // prefill buffers (rows padded to kMaxChunk)
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
+    void loadMtp();
     void dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
     void dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
 
