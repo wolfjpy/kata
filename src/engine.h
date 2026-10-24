@@ -23,12 +23,14 @@ public:
     Gguf gg;
     Gpu gpu;
     uint32_t maxCtx = 0, dbgTokens = 0;
+    std::vector<std::string> skip;   // profiling ablation: names of ops to leave out of the command stream (timing only; results are garbage)
+    bool sk(const char* n) const { for (auto& s : skip) if (s == n) return true; return false; }
     LayerW layers[bonsai::kLayers];
     uint64_t tokEmbd = 0, outNorm = 0, outW = 0;
 
     bool load(const std::string& model, const std::string& metallib, uint32_t maxCtx, uint32_t dbgTokens);
     // Runs one token at position `pos`; returns the greedy next token. If dbgSlot >= 0 the per-layer residual and block outputs are recorded.
-    int step(int token, uint32_t pos, int dbgSlot = -1);
+    int step(int token, uint32_t pos, int dbgSlot = -1, bool wantLogits = true);
     void resetState();
     const float* logits() const { return (const float*)bufLogits->contents(); }
     const float* dbgResidual(int layer, int slot) const { return (const float*)dbgRes->contents() + ((size_t)layer * dbgTokens + slot) * bonsai::kHidden; }
@@ -36,11 +38,11 @@ public:
 
 private:
     MTL::Buffer *wbuf = nullptr;
-    MTL::Buffer *bufX, *bufXp, *bufH, *bufQkv, *bufConv, *bufZ, *bufAlpha, *bufBeta, *bufGdnOut, *bufTmp, *bufQfull, *bufK, *bufV, *bufQ, *bufGate, *bufAttnO, *bufG, *bufU, *bufLogits, *bufTok, *bufArg;
+    MTL::Buffer *bufXs[2], *bufXp, *bufH, *bufQkv, *bufConv, *bufZ, *bufAlpha, *bufBeta, *bufGdnOut, *bufTmp, *bufPM, *bufPL, *bufPA, *bufQfull, *bufK, *bufV, *bufQ, *bufGate, *bufAttnO, *bufG, *bufU, *bufLogits, *bufTok, *bufArg;
     MTL::Buffer *sg5120, *sg6144, *sg17408, *gsAll, *gdnState, *convState, *kcache, *vcache, *dbgRes, *dbgBlk;
     uint32_t nGdn = 0, nAttn = 0;
 
-    void dGemvPtq1(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N);
+    void dGemvPtq1(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N, const char* label = "gemv");
     void dGemvBf16(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N);
     void dRmsFwht(MTL::ComputeCommandEncoder* e, MTL::Buffer* src, MTL::Buffer* src2, MTL::Buffer* gs, uint64_t gsOff, MTL::Buffer* out, uint32_t W, uint32_t mode);
     void dAdd(MTL::ComputeCommandEncoder* e, MTL::Buffer* x, MTL::Buffer* y, uint32_t n);

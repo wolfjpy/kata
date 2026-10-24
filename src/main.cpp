@@ -13,20 +13,20 @@ static std::vector<float> readF32(const std::string& path) {
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); std::vector<float> v(n / 4); fread(v.data(), 4, v.size(), f); fclose(f); return v;
 }
 int main(int argc, char** argv) {
-    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits; int gen = 0; uint32_t ctx = 2048;
+    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits; int gen = 0; uint32_t ctx = 2048; std::string skipArg;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]);
-        else if (a == "--ref-dir") refDir = argv[++i]; else if (a == "--ref-logits") refLogits = argv[++i]; else if (a == "--ctx") ctx = atoi(argv[++i]);
+        else if (a == "--ref-dir") refDir = argv[++i]; else if (a == "--ref-logits") refLogits = argv[++i]; else if (a == "--ctx") ctx = atoi(argv[++i]); else if (a == "--skip") skipArg = argv[++i];
     }
     if (model.empty() || ids.empty()) { fprintf(stderr, "usage: bonsai --model M.gguf --ids 1,2,3 [--gen N] [--ref-dir D] [--ref-logits F] [--ctx N]\n"); return 1; }
     std::vector<int> toks; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); toks.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
     const uint32_t dbg = refDir.empty() ? 0 : (uint32_t)toks.size();
-    Engine eng; if (!eng.load(model, metallib, ctx, dbg)) return 1;
+    Engine eng; if (!eng.load(model, metallib, ctx, dbg)) return 1; { size_t p = 0; while (p < skipArg.size()) { size_t q = skipArg.find(',', p); if (q == std::string::npos) q = skipArg.size(); eng.skip.push_back(skipArg.substr(p, q - p)); p = q + 1; } }
     std::vector<std::vector<float>> myLogits;
     auto t0 = std::chrono::steady_clock::now(); int next = 0;
     for (size_t i = 0; i < toks.size(); i++) {
-        next = eng.step(toks[i], (uint32_t)i, dbg ? (int)i : -1);
+        next = eng.step(toks[i], (uint32_t)i, dbg ? (int)i : -1, !refLogits.empty() || i + 1 == toks.size());
         if (!refLogits.empty()) myLogits.emplace_back(eng.logits(), eng.logits() + bonsai::kVocab);
     }
     double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

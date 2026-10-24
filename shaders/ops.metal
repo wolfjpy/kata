@@ -78,3 +78,29 @@ kernel void k_rmsnorm(device const float* src [[buffer(0)]], device const float*
     float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
     for (uint i = tid; i < W; i += 256) out[i] = src[i] * inv * w[i];
 }
+
+// Fused residual add + RMSNorm + sign + FWHT (+ optional plain normalized copy for the unrotated alpha/beta projections).
+//   xnew = x + y (each threadgroup writes its own 1024-block);  out = H( gs (.) rmsnorm_sumsq(xnew) * xnew );  hout = xnew * inv * gamma (if hout != null via flag)
+kernel void k_add_rms_fwht(device const float* x [[buffer(0)]], device const float* y [[buffer(1)]], device const float* gs [[buffer(2)]], device float* out [[buffer(3)]],
+                           device float* xnew [[buffer(4)]], device const float* gamma [[buffer(5)]], device float* hout [[buffer(6)]], constant uint& flags [[buffer(7)]],
+                           uint tgid [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    // flags: bit0 = add y (else x only), bit1 = write plain h
+    threadgroup float xs[1024]; threadgroup float part[8];
+    const uint W = bonsai::kHidden;
+    float ss = 0.0f;
+    for (uint i = tid; i < W; i += 256) { float v = x[i] + ((flags & 1u) ? y[i] : 0.0f); ss += v * v; }
+    ss = simd_sum(ss);
+    if (lane == 0) part[sg] = ss;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float tot = 0.0f; for (uint s = 0; s < 8; s++) tot += part[s];
+    float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint base = tgid * 1024 + tid * 4; float vals[4];
+    for (uint r = 0; r < 4; r++) {
+        uint idx = base + r; float v = x[idx] + ((flags & 1u) ? y[idx] : 0.0f);
+        xnew[idx] = v; vals[r] = v * inv * gs[idx];
+        if (flags & 2u) hout[idx] = v * inv * gamma[idx];
+    }
+    float4 o = fwht1024(float4(vals[0], vals[1], vals[2], vals[3]), tid, lane, xs);
+    out[base] = o.x; out[base + 1] = o.y; out[base + 2] = o.z; out[base + 3] = o.w;
+}
