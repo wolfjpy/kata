@@ -5,6 +5,14 @@
 #include "common.h"
 using namespace mpp::tensor_ops;
 
+
+// Grouped tile order: linear threadgroup id -> (m tile, n tile). Groups of `gm` consecutive M tiles walk the N tiles together, so one B strip is reused by gm tiles while their A rows stay in cache.
+inline uint2 tile_order(uint id, uint Mt, uint Nt, uint gm) {
+    if (gm == 0u) return uint2(id % Nt, id / Nt);                                    // (n, m): N-fast
+    const uint perGroup = gm * Nt, grp = id / perGroup, firstM = grp * gm, sz = min(Mt - firstM, gm), inGrp = id % perGroup;
+    return uint2(inGrp / sz, firstM + inGrp % sz);                                  // (n, m)
+}
+
 // ---- weight expansion: PTQ1_0 [N rows][K/128 blocks] -> fp16 tile-major [N/64][K][64]  (element [nt][k][n % 64]) ----
 // Grid (K/128, N/64) threadgroups of 256 threads; one threadgroup expands 64 rows x 128 k and writes one contiguous 16 KiB tile.
 kernel void k_expand_ptq1(device const uchar* W [[buffer(0)]], device half* out [[buffer(1)]], constant uint& K [[buffer(2)]],
@@ -21,8 +29,8 @@ kernel void k_expand_ptq1(device const uchar* W [[buffer(0)]], device half* out 
 }
 
 // ---- GEMM: C[M][N] (fp32) = A[M][K] (fp16) x W^T, with W in the tile-major layout above. tile 32x64, one simdgroup, N-fast grid. ----
-kernel void k_gemm_f16(device half* A [[buffer(0)]], device half* B [[buffer(1)]], device float* C [[buffer(2)]], constant uint4& dims [[buffer(3)]], uint2 tgid [[threadgroup_position_in_grid]]) {
-    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const bool mfast = dims.w != 0; const uint nt = mfast ? tgid.y : tgid.x, mt = mfast ? tgid.x : tgid.y;
+kernel void k_gemm_f16(device half* A [[buffer(0)]], device half* B [[buffer(1)]], device float* C [[buffer(2)]], constant uint4& dims [[buffer(3)]], uint tgid1 [[threadgroup_position_in_grid]]) {
+    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const uint2 tl = tile_order(tgid1, uint(M) / 32u, uint(N) / 64u, dims.w); const uint nt = tl.x, mt = tl.y;
     tensor<device half, dextents<int32_t, 2>, tensor_inline> tA(A, dextents<int32_t, 2>(K, M));
     tensor<device float, dextents<int32_t, 2>, tensor_inline> tC(C, dextents<int32_t, 2>(N, M));
     constexpr auto desc = matmul2d_descriptor(32, 64, static_cast<int>(dynamic_extent));
@@ -373,8 +381,8 @@ kernel void k_quant_rows(device const half* x [[buffer(0)]], device char* q [[bu
 }
 // ---- int8 GEMM with the per-group scale epilogue; tile 64x64, 4 simdgroups, N-fast grid. M must be a multiple of 64. ----
 kernel void k_gemm_i8(device int8_t* A [[buffer(0)]], device int8_t* B [[buffer(1)]], device float* SW [[buffer(2)]], device float* SX [[buffer(3)]], device float* C [[buffer(4)]],
-                      constant uint4& dims [[buffer(5)]], uint2 tgid [[threadgroup_position_in_grid]]) {
-    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const uint mode = dims.w; const int nt = int(tgid.x), mt = int(tgid.y); const int G = K / 128;
+                      constant uint4& dims [[buffer(5)]], uint tgid1 [[threadgroup_position_in_grid]]) {
+    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const uint mode = dims.w & 0xffu; const uint2 tl = tile_order(tgid1, uint(M) / 64u, uint(N) / 64u, dims.w >> 8); const int nt = int(tl.x), mt = int(tl.y); const int G = K / 128;
     tensor<device float, dextents<int32_t, 2>, tensor_inline> tC(C, dextents<int32_t, 2>(N, M));
     constexpr auto desc = matmul2d_descriptor(64, 64, 128, false, false, false, matmul2d_descriptor::mode::multiply);
     matmul2d<desc, execution_simdgroups<4>> op;
