@@ -167,17 +167,19 @@ int Engine::step(int token, uint32_t pos, int dbgSlot, bool wantLogits) {
 // Batched prefill (path A: exact fp16). Weights are expanded to fp16 on the GPU matrix by matrix, then multiplied by the matrix unit.
 void Engine::dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N) {
     if (sk("p_gemm")) return;
-    uint32_t dims[4] = {Mpad, N, K, 0};
+    static const bool mfast = getenv("BONSAI_GEMM_MFAST") != nullptr;
+    uint32_t dims[4] = {Mpad, N, K, mfast ? 1u : 0u};
     e->setComputePipelineState(gpu.pipe("k_gemm_f16")); e->setBuffer(A, 0, 0); e->setBuffer(B, bOff, 1); e->setBuffer(C, 0, 2); e->setBytes(dims, 16, 3);
-    e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 32, 1), MTL::Size(32, 1, 1));
+    if (mfast) e->dispatchThreadgroups(MTL::Size(Mpad / 32, N / 64, 1), MTL::Size(32, 1, 1)); else e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 32, 1), MTL::Size(32, 1, 1));
 }
 void Engine::dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N) {
+    static const bool oldExpand = getenv("BONSAI_OLD_EXPAND") != nullptr;
     if (int8Mode) {
-        if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe("k_expand_i8")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
+        if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe(oldExpand ? "k_expand_i8" : "k_expand_i8_v2")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
         if (!sk("p_gemm")) { uint32_t dims[4] = {Mpad, N, K, 0}; e->setComputePipelineState(gpu.pipe("k_gemm_i8")); e->setBuffer(pXq, 0, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBuffer(pSx, 0, 3); e->setBuffer(C, 0, 4); e->setBytes(dims, 16, 5); e->dispatchThreadgroups(MTL::Size(N / 64, Mpad / 64, 1), MTL::Size(128, 1, 1)); }
         return;
     }
-    if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe("k_expand_ptq1")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage, 0, 1); e->setBytes(&K, 4, 2);
+    if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe(oldExpand ? "k_expand_ptq1" : "k_expand_ptq1_v2")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage, 0, 1); e->setBytes(&K, 4, 2);
         e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
     dGemm(e, A, pStage, 0, C, Mpad, K, N);
 }

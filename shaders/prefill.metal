@@ -21,8 +21,8 @@ kernel void k_expand_ptq1(device const uchar* W [[buffer(0)]], device half* out 
 }
 
 // ---- GEMM: C[M][N] (fp32) = A[M][K] (fp16) x W^T, with W in the tile-major layout above. tile 32x64, one simdgroup, N-fast grid. ----
-kernel void k_gemm_f16(device half* A [[buffer(0)]], device half* B [[buffer(1)]], device float* C [[buffer(2)]], constant uint3& dims [[buffer(3)]], uint2 tgid [[threadgroup_position_in_grid]]) {
-    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const uint nt = tgid.x, mt = tgid.y;
+kernel void k_gemm_f16(device half* A [[buffer(0)]], device half* B [[buffer(1)]], device float* C [[buffer(2)]], constant uint4& dims [[buffer(3)]], uint2 tgid [[threadgroup_position_in_grid]]) {
+    const int M = int(dims.x), N = int(dims.y), K = int(dims.z); const bool mfast = dims.w != 0; const uint nt = mfast ? tgid.y : tgid.x, mt = mfast ? tgid.x : tgid.y;
     tensor<device half, dextents<int32_t, 2>, tensor_inline> tA(A, dextents<int32_t, 2>(K, M));
     tensor<device float, dextents<int32_t, 2>, tensor_inline> tC(C, dextents<int32_t, 2>(N, M));
     constexpr auto desc = matmul2d_descriptor(32, 64, static_cast<int>(dynamic_extent));
@@ -419,4 +419,44 @@ kernel void k_gdn_rec_b2(device const float* conv [[buffer(0)]], device const fl
         if (part == 0) raw[ulong(t) * 6144ul + hv * 128 + v] = y * 0.08838834764831845f;
     }
     for (uint k = 0; k < 32; k++) scol[k * 128u] = st[k];
+}
+
+// =====================================================================================================================
+// Weight expansion v2: no threadgroup staging. Thread = (row group of 4 rows, k-slice of 8) -> 16 x 16 = 256 threads per 64-row x 128-k tile.
+// A slice [8s, 8s+8) of a block always shares one trit digit n over 8 consecutive bytes (s<10: n=s/2, bytes (s&1)*8..+7; s=10..14: n=s-10, bytes 16..23; s=15: qh, 2 bytes x 4 digits),
+// so the decode is a uniform float "floor(3^(n+1) u) - 3 floor(3^n u)" and each thread stores four rows' trits for one k as a single 32-bit word.
+inline float p3n(uint n) { return n == 0 ? 1.0f : n == 1 ? 3.0f : n == 2 ? 9.0f : n == 3 ? 27.0f : n == 4 ? 81.0f : 243.0f; }
+inline void ptq1_slice(device const uchar* bp, uint s, thread float* t) {
+    if (s < 15) {
+        const uint n = s < 10 ? s >> 1 : s - 10, off = s < 10 ? (s & 1u) * 8u : 16u;
+        const uint2 w = uint2(*(device const uint*)(bp + off), *(device const uint*)(bp + off + 4));
+        const float a = p3n(n) * (1.0f / 256.0f), b = p3n(n + 1) * (1.0f / 256.0f);
+        for (uint j = 0; j < 8; j++) { const float u = float((j < 4 ? w.x >> (8 * j) : w.y >> (8 * (j - 4))) & 0xffu); t[j] = floor(u * b) - 3.0f * floor(u * a) - 1.0f; }
+    } else {
+        const ushort h = *(device const ushort*)(bp + 24);
+        for (uint j = 0; j < 8; j++) { const uint n = j >> 1, hb = j & 1u; const float u = float((h >> (8 * hb)) & 0xffu); t[j] = floor(u * p3n(n + 1) * (1.0f / 256.0f)) - 3.0f * floor(u * p3n(n) * (1.0f / 256.0f)) - 1.0f; }
+    }
+}
+kernel void k_expand_i8_v2(device const uchar* W [[buffer(0)]], device char* out [[buffer(1)]], device float* sw [[buffer(2)]], constant uint& K [[buffer(3)]],
+                           uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    const uint kb = tg.x, nt = tg.y, nblk = K / 128u; const uint rg = tid & 15u, s = tid >> 4;
+    float t[4][8];
+    for (uint r = 0; r < 4; r++) {
+        device const uchar* bp = W + (ulong(nt * 64u + rg * 4u + r) * ulong(nblk) + kb) * 28ul;
+        ptq1_slice(bp, s, t[r]);
+        if (s == 0) sw[(ulong(nt) * nblk + kb) * 64ul + rg * 4u + r] = ptq1_scale(bp);
+    }
+    device char* o = out + (ulong(nt) * ulong(K) + ulong(kb) * 128ul + s * 8ul) * 64ul + rg * 4u;
+    for (uint j = 0; j < 8; j++) {
+        const uint w = (uint(uchar(char(t[0][j]))) ) | (uint(uchar(char(t[1][j]))) << 8) | (uint(uchar(char(t[2][j]))) << 16) | (uint(uchar(char(t[3][j]))) << 24);
+        *(device uint*)(o + ulong(j) * 64ul) = w;
+    }
+}
+kernel void k_expand_ptq1_v2(device const uchar* W [[buffer(0)]], device half* out [[buffer(1)]], constant uint& K [[buffer(2)]],
+                             uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    const uint kb = tg.x, nt = tg.y, nblk = K / 128u; const uint rg = tid & 15u, s = tid >> 4;
+    float t[4][8]; float d[4];
+    for (uint r = 0; r < 4; r++) { device const uchar* bp = W + (ulong(nt * 64u + rg * 4u + r) * ulong(nblk) + kb) * 28ul; ptq1_slice(bp, s, t[r]); d[r] = ptq1_scale(bp); }
+    device half* o = out + (ulong(nt) * ulong(K) + ulong(kb) * 128ul + s * 8ul) * 64ul + rg * 4u;
+    for (uint j = 0; j < 8; j++) { *(device half4*)(o + ulong(j) * 64ul) = half4(half(t[0][j] * d[0]), half(t[1][j] * d[1]), half(t[2][j] * d[2]), half(t[3][j] * d[3])); }
 }
