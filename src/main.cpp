@@ -27,7 +27,11 @@ static void klStats(const char* label, const float* ref, const float* mine, size
     }
     printf("%-34s positions %zu | mean KL %.3e | max KL %.3e | top-1 agreement %zu/%zu (%.2f%%)%s\n", label, n, sumKl / std::max<size_t>(1, n - bad), maxKl, agree, n, 100.0 * agree / n, bad ? " (some NaN)" : "");
 }
+#include "cli.h"
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
+    if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
     std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];

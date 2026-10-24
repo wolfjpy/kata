@@ -34,5 +34,6 @@ struct Gguf {
     const GgufTensor& tensor(const std::string& name) const;   // aborts if missing
     const uint8_t* bytes(uint64_t fileOffset) const { return (const uint8_t*)map + fileOffset; }
     std::vector<int32_t> signedInts(const std::string& key) const;   // integer array -> int32 vector
+    std::vector<std::string> strArray(const std::string& key) const; // string array
     void close();
 };

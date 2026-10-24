@@ -81,3 +81,9 @@ std::vector<int32_t> Gguf::signedInts(const std::string& key) const {
     return out;
 }
 void Gguf::close() { if (map) munmap(map, mapLen); if (fd >= 0) ::close(fd); map = nullptr; fd = -1; }
+std::vector<std::string> Gguf::strArray(const std::string& key) const {
+    auto it = arrays.find(key); if (it == arrays.end() || it->second.elemType != 8) { fprintf(stderr, "gguf: missing string array %s\n", key.c_str()); exit(1); }
+    const GgufArray& a = it->second; std::vector<std::string> out; out.reserve(a.count); uint64_t p = a.payload;
+    for (uint64_t i = 0; i < a.count; i++) { uint64_t n; memcpy(&n, bytes(p), 8); p += 8; out.emplace_back((const char*)bytes(p), n); p += n; }
+    return out;
+}

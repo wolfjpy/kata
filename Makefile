@@ -11,13 +11,17 @@ BUILD := build
 SHADERS := $(wildcard shaders/*.metal)
 AIRS := $(patsubst shaders/%.metal,$(BUILD)/%.air,$(SHADERS))
 SRCS := $(filter-out src/tool_%.cpp,$(wildcard src/*.cpp))
-OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SRCS))
+MMSRCS := $(wildcard src/*.mm)
+OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SRCS)) $(patsubst src/%.mm,$(BUILD)/%.o,$(MMSRCS))
 
 .PHONY: all clean shaders ref_logits
 all: $(BUILD)/bonsai $(BUILD)/bonsai.metallib
 
 $(BUILD)/%.o: src/%.cpp $(wildcard src/*.h) config/bonsai_m6.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD)/%.o: src/%.mm $(wildcard src/*.h) config/bonsai_m6.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc -c $< -o $@
 
 $(BUILD)/bonsai: $(OBJS)
 	$(CXX) $(OBJS) $(LDFLAGS) -o $@
