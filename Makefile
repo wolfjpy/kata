@@ -58,3 +58,6 @@ $(BUILD)/probe_flash: tools/probe_flash.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 
 $(BUILD)/layout_probe: tools/layout_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/layout_probe.cpp src/gpu.cpp $(LDFLAGS) -o $@
+
+$(BUILD)/kv_read_probe: tools/kv_read_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/kv_read_probe.cpp src/gpu.cpp $(LDFLAGS) -o $@

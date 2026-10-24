@@ -131,3 +131,19 @@ T=1→2 增加 59%,T=3 增加近 200%:**ALU 受限**。按操作数估算 T=2 �
 | 1024 | 278 tok/s |
 | 3639 | 201 tok/s |
 | 7279 | 176 tok/s |
+
+## 7. 补充:长上下文解码(flash-decoding)
+
+7.3K token 上下文,贪心 64 token:
+
+| | 普通解码 | MTP |
+|---|---|---|
+| 短上下文 | 19.8 tok/s | 25.0 tok/s |
+| 7.3K 上下文,旧标量注意力 | 17.8 tok/s | 20.3 tok/s |
+| 7.3K 上下文,矩阵单元 flash-decoding(默认) | 17.6–17.9 tok/s | **21.4–21.7 tok/s** |
+
+`k_attn_dec_split` / `k_attn_dec_combine`(`shaders/flash.metal`):同一 KV 头的 6 个头 × 1–2 个 token = 最多 12 行,凑成一个 16 行的 `matmul2d` 块;按 128 个 key 一段拆成多个 split(每段一个 simdgroup),最后合并并乘 sigmoid 门。验证 2 个 token 时只读一遍 K/V(旧内核读两遍),所以 MTP 路径有 ~5% 提升;普通解码持平。数值与旧内核等价(72 个位置 KL 7e-9)。
+
+用 `BONSAI_SKIP=k_attn_split` 整个跳过注意力:7.3K 上下文只多出 ~5 ms/token(17.1 → 18.7 tok/s)。纯带宽探针(`tools/kv_read_probe.cpp`,同样的访问模式)显示:K/V 的读取在 7.3K 个 key 时本身就要 205 µs/层 × 16 层 = **3.3 ms**(每个 key 每层 K+V 共 4 KB,每 token 64 KB),并且跨步布局(`[pos][4 头][256]`)与按头连续布局没有区别(都是 ~145 GB/s)。所以两种注意力内核都已经在带宽的 ~65%,继续优化内核没有意义;32K 上下文的 KV 读取理论值是 13 ms/token(权重 40 ms 之外的 +30%)。缩小这部分只有一条路:压缩 KV(fp8/int8,有损,需要质量门限),见下一步。
+
+新增环境变量:`BONSAI_SKIP=a,b`(CLI 运行时的算子消融)、`BONSAI_SCALAR_DEC=1`(旧的标量解码注意力,用于对照)、`BONSAI_DEC_CHUNK`(split 的 key 数,默认 128)。
