@@ -24,6 +24,7 @@ int cmdTokenize(int argc, char** argv) {
 #include "chat.h"
 #include "engine.h"
 #include "spec.h"
+#include "ckpt.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -33,28 +34,42 @@ struct Session {
     Engine eng; Tokenizer tok; Gguf* gg = nullptr; uint32_t pos = 0; uint32_t ctx = 0; bool fast = false;
     double prefillSec = 0; uint32_t prefillTokens = 0;
     // Feeds tokens at positions [pos, pos+n); returns the greedy token after the last one (logits stay in eng.logits()).
-    int feed(const std::vector<int32_t>& ids) {
+    PrefixCache* cache = nullptr; int32_t userTok = -1; uint32_t restoredTokens = 0; double restoreSec = 0;
+    int feedRange(const std::vector<int32_t>& ids, size_t a, size_t b) {
         auto t0 = std::chrono::steady_clock::now();
-        int last = eng.feed(ids.data(), (uint32_t)ids.size(), pos, true); pos += (uint32_t)ids.size();
-        prefillSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); prefillTokens += (uint32_t)ids.size(); return last;
+        int last = eng.feed(ids.data() + a, (uint32_t)(b - a), pos, true); pos += (uint32_t)(b - a);
+        prefillSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); prefillTokens += (uint32_t)(b - a); return last;
+    }
+    // Feeds the prompt. At position 0 the longest cached prefix is restored from disk first, and the checkpoints the cache plans (start of the last
+    // user turn, end of the prompt) are written as the prompt is consumed. Later feeds (a chat turn continuing in this process) go straight to the engine.
+    int feed(const std::vector<int32_t>& ids) {
+        if (!(cache && cache->config().enabled && pos == 0 && ids.size() >= cache->config().minTokens)) return feedRange(ids, 0, ids.size());
+        if (userTok < 0) { std::vector<int32_t> u = tok.encode("user", false); userTok = u.size() == 1 ? u[0] : -2; }
+        size_t cur = 0; int last = -1;
+        auto t0 = std::chrono::steady_clock::now(); int lt = -1; const uint32_t r = cache->restore(ids, &lt);
+        if (r) { restoreSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); restoredTokens = r; cur = r; pos = r; fprintf(stderr, "[cache] restored %u of %zu prompt tokens in %.2f s\n", r, ids.size(), restoreSec); if (r == ids.size()) return lt; }
+        for (uint32_t p : PrefixCache::plan(ids, tok.imStart, userTok, cache->config().minTokens)) { if (p <= cur) continue; last = feedRange(ids, cur, p); cur = p; cache->save(ids.data(), p); }
+        if (cur < ids.size()) last = feedRange(ids, cur, ids.size());
+        return last;
     }
 };
 }
 
 int cmdRun(int argc, char** argv, bool interactive) {
     std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false; int maxTokens = 512; uint32_t ctx = 8192;
-    SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); bool fast = false;
+    CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); bool fast = false;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
         if (a == "--model") model = nx(); else if (a == "--prompt") prompt = nx(); else if (a == "--file") { prompt = readFile(argv[++i]); haveFile = true; } else if (a == "--system") system = nx(); else if (a == "--raw") raw = true;
         else if (a == "--no-think") noThink = true; else if (a == "--effort") effort = nx(); else if (a == "--max-tokens") maxTokens = atoi(nx().c_str()); else if (a == "--ctx") ctx = (uint32_t)atoi(nx().c_str());
         else if (a == "--temp") sp.temp = (float)atof(nx().c_str()); else if (a == "--top-k") sp.topK = atoi(nx().c_str()); else if (a == "--top-p") sp.topP = (float)atof(nx().c_str()); else if (a == "--min-p") sp.minP = (float)atof(nx().c_str());
-        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") fast = true; else if (a == "--exact") fast = false; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true;
+        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") fast = true; else if (a == "--exact") fast = false; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
     }
     if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: bonsai run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       bonsai chat --model M.gguf [same options]\n"); return 1; }
     Session S; S.ctx = ctx; S.fast = fast;
     if (!S.eng.load(model, metallib, ctx, 0)) return 1; S.eng.int8Mode = fast; const bool spec = S.eng.hasMtp && !noSpec; S.eng.mtpTrack = spec;
     SpecStats sst;
+    PrefixCache cache(S.eng, cc, spec); S.cache = &cache;
     if (!S.tok.load(S.eng.gg)) return 1;
     ChatOpts co; co.thinking = !noThink; co.effort = effort; std::mt19937_64 rng(sp.seed);
     std::vector<Msg> history; Detok dt(&S.tok); int nOut = 0; double decSec = 0;
@@ -80,6 +95,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
         std::string rest = dt.flush(); if (!rest.empty()) fputs(rest.c_str(), stdout); fputc('\n', stdout); fflush(stdout);
     };
     auto report = [&]() { if (stats && spec && sst.cycles) fprintf(stderr, "[mtp: %llu cycles, %.1f%% of drafts accepted, %.2f tokens/cycle | draft %.1f ms/cycle, verify %.1f ms/cycle, sampling %.1f ms/cycle]\n", (unsigned long long)sst.cycles, 100.0 * sst.accepted / sst.cycles, (double)(sst.cycles + sst.accepted) / sst.cycles, 1e3 * sst.draftSec / sst.cycles, 1e3 * sst.verifySec / sst.cycles, 1e3 * sst.sampleSec / sst.cycles);
+        if (stats && S.restoredTokens) fprintf(stderr, "[cache: %u prompt tokens restored from disk in %.2f s]\n", S.restoredTokens, S.restoreSec);
         if (stats) fprintf(stderr, "[prefill %u tokens in %.2f s = %.1f tok/s | decode %d tokens in %.2f s = %.1f tok/s]\n", S.prefillTokens, S.prefillSec, S.prefillTokens / std::max(1e-9, S.prefillSec), nOut, decSec, nOut / std::max(1e-9, decSec)); };
     if (!interactive) {
         std::string text = raw ? prompt : renderChat({ {"system", system, ""}, {"user", prompt, ""} }, co);
@@ -96,7 +112,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
     while (true) {
         fputs("\n> ", stdout); fflush(stdout); if (!std::getline(std::cin, line)) break; if (line == "/quit" || line.empty()) break;
         if (warm.joinable()) warm.join();
-        if (line == "/reset") { S.eng.resetState(); S.pos = 0; firstTurn = true; fprintf(stderr, "[reset]\n"); continue; }
+        if (line == "/reset") { cache.waitIdle(); S.eng.resetState(); S.pos = 0; firstTurn = true; fprintf(stderr, "[reset]\n"); continue; }
         std::string suffix;
         if (firstTurn) { std::vector<Msg> m; if (!system.empty()) m.push_back({"system", system, ""}); m.push_back({"user", line, ""}); suffix = renderChat(m, co); }
         else { suffix = "\n<|im_start|>user\n" + line + "<|im_end|>\n<|im_start|>assistant\n"; suffix += co.thinking ? "<think>\n" : "<think>\n\n</think>\n\n"; }
@@ -193,4 +209,12 @@ int cmdKlEval(int argc, char** argv) {
     });
     printf("\nint8 vs exact fp16: %zu positions | mean KL %.3e nat | max KL %.3e | max |logit diff| %.3f | top-1 agreement %zu/%zu (%.2f%%)\n", cnt, sumKl / cnt, maxKl, sumAbs, agree, cnt, 100.0 * agree / cnt);
     fclose(sp); remove(spill.c_str()); return 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// bonsai cache [--cache-dir D] [--clear]: list or delete the persistent prefix cache
+int cmdCache(int argc, char** argv) {
+    std::string dir; bool clr = false;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--cache-dir") dir = argv[++i]; else if (a == "--clear") clr = true; }
+    return listCacheDir(dir.empty() ? defaultCacheDir() : dir, clr);
 }
