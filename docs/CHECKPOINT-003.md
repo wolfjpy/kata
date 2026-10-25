@@ -178,7 +178,7 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 
 ## 10.4 DFlash2 重开(2026-10-25)
 
-`reports/M14` 的"结案"判断被推翻:它拿 T=2 当基准而不是带宽下限,T=8 验证其实仍受带宽限制(~40 ms),而原型内核对 K=128/M=8/N=16/串行解码与 MMA 都是有缺陷的。今天新测的接受曲线(K=1/3/5/7 → 1.92/3.24/4.68/5.20 token/轮)显示收益随宽度单调增长。重开的计划在 **`reports/R2-dflash2-revisit.md`(M25 宽验证内核 → M26 验证侧完整化 → M27 MTP 链 → M28 DFlash2 移植 → M29 宽度自适应)**。M25 已完成:`reports/M25-wide-verify-kernel.md`,r=2.47(目标 1.6),按 R2 §5 的下界线推进。
+`reports/M14` 的"结案"判断被推翻:它拿 T=2 当基准而不是带宽下限,T=8 验证其实仍受带宽限制(~40 ms),而原型内核对 K=128/M=8/N=16/串行解码与 MMA 都是有缺陷的。今天新测的接受曲线(K=1/3/5/7 → 1.92/3.24/4.68/5.20 token/轮)显示收益随宽度单调增长。重开的计划在 **`reports/R2-dflash2-revisit.md`(M25 宽验证内核 → M26 验证侧完整化 → M27 MTP 链 → M28 DFlash2 移植 → M29 宽度自适应)**。M25 已完成(`reports/M25-wide-verify-kernel.md`,r=2.47,目标 1.6);M26 已完成(`reports/M26-verification-side.md`):任意宽度验证 + 9 份状态快照 + 提交,`--vwidth 8` 逐 token 复现普通贪心,每轮 167 ms(与 T 几乎无关)。
 
 ## 10.5 后续(2026-10-25):仓库评估与下一阶段方案
 
