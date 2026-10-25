@@ -73,6 +73,13 @@ public:
     uint32_t numAttn() const { return nAttn; }
     uint64_t modelFingerprint() const;      // model file size + hash of its first 64 KiB
     std::string numericsTag() const;        // everything that changes the numbers a prefill produces (int8 path, exclusions, ...)
+    // int8 prefill (lossy): which matrices use the int8 x int8 path (the others stay exact fp16). Bit per name: qkv z ssmout wq wk wv wo gate up down.
+    uint32_t i8Mask = 0;
+    static uint32_t i8Bit(const char* name);
+    bool i8(const char* name) const { return int8Mode && (i8Mask & i8Bit(name)) != 0; }
+    // "all" (every matrix), "ffn" (FFN gate+up only: ~47% of the FLOPs, the error-optimal subset), or a comma list; "" or "none" switches int8 off.
+    bool setI8(const std::string& spec);
+    std::string i8Names() const;
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }

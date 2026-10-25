@@ -191,8 +191,7 @@ void Engine::dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B
 }
 void Engine::dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N, const char* name) {
     static const bool oldExpand = getenv("BONSAI_OLD_EXPAND") != nullptr;
-    static const std::string excl = getenv("BONSAI_I8_EXCLUDE") ? std::string(",") + getenv("BONSAI_I8_EXCLUDE") + "," : std::string();
-    const bool useI8 = int8Mode && excl.find(std::string(",") + name + ",") == std::string::npos;
+    const bool useI8 = i8(name);
     if (useI8) {
         if (!sk("p_expand")) { e->setComputePipelineState(gpu.pipe(oldExpand ? "k_expand_i8" : "k_expand_i8_v2")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBytes(&K, 4, 3); e->dispatchThreadgroups(MTL::Size(K / 128, N / 64, 1), MTL::Size(256, 1, 1)); }
         if (!sk("p_gemm")) { static const uint32_t i8mode = getenv("BONSAI_I8_MODE") ? (uint32_t)atoi(getenv("BONSAI_I8_MODE")) : 0u; uint32_t dims[4] = {Mpad, N, K, i8mode | (gemmGroup << 8)}; e->setComputePipelineState(gpu.pipe("k_gemm_i8")); e->setBuffer(pXq, 0, 0); e->setBuffer(pStage8, 0, 1); e->setBuffer(pStageSW, 0, 2); e->setBuffer(pSx, 0, 3); e->setBuffer(C, 0, 4); e->setBytes(dims, 16, 5); e->dispatchThreadgroups(MTL::Size((uint64_t)(N / 64) * (Mpad / 64), 1, 1), MTL::Size(128, 1, 1)); }
@@ -210,23 +209,25 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
     const uint32_t H = kHidden, Mpad32 = (M + 31) / 32 * 32, Mpad = int8Mode ? (M + 63) / 64 * 64 : Mpad32;
     MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     int c = 0;
-    auto quant = [&](uint32_t K) { if (!int8Mode || sk("p_quant")) return; e->setComputePipelineState(gpu.pipe("k_quant_rows")); e->setBuffer(pXp, 0, 0); e->setBuffer(pXq, 0, 1); e->setBuffer(pSx, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&Mpad, 4, 4); e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1)); };
+    auto nq = [&](std::initializer_list<const char*> names) { for (const char* n : names) if (i8(n)) return true; return false; };   // does any consumer of this activation use the int8 path?
+    auto qIn = [&](uint32_t layer) { return layers[layer].isAttn ? nq({"wq", "wk", "wv"}) : nq({"qkv", "z"}); };
+    auto quant = [&](uint32_t K, bool need) { if (!need || !int8Mode || sk("p_quant")) return; e->setComputePipelineState(gpu.pipe("k_quant_rows")); e->setBuffer(pXp, 0, 0); e->setBuffer(pXq, 0, 1); e->setBuffer(pSx, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&Mpad, 4, 4); e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1)); };
     if (!sk("p_embed")) { e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(pTok, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(pX[0], 0, 3); e->dispatchThreadgroups(MTL::Size(5, M, 1), MTL::Size(256, 1, 1)); }
-    auto fusedNorm = [&](MTL::Buffer* x, MTL::Buffer* y, uint64_t gsOff, MTL::Buffer* xnew, uint64_t gammaOff, bool wantH) {
+    auto fusedNorm = [&](MTL::Buffer* x, MTL::Buffer* y, uint64_t gsOff, MTL::Buffer* xnew, uint64_t gammaOff, bool wantH, bool needQ) {
         if (sk("p_norm")) return;
         uint32_t flags = (y ? 1u : 0u) | (wantH ? 2u : 0u);
         e->setComputePipelineState(gpu.pipe("k_add_rms_fwht_t")); e->setBuffer(x, 0, 0); e->setBuffer(y ? y : x, 0, 1); e->setBuffer(gsAll, gsOff, 2); e->setBuffer(pXp, 0, 3);
         e->setBuffer(xnew, 0, 4); e->setBuffer(wbuf, gammaOff, 5); e->setBuffer(pHh, 0, 6); e->setBytes(&flags, 4, 7);
         e->dispatchThreadgroups(MTL::Size(M, 1, 1), MTL::Size(256, 1, 1));
-        quant(5120);
+        quant(5120, needQ);
     };
-    auto fwhtB = [&](MTL::Buffer* src, MTL::Buffer* src2, MTL::Buffer* sgn, uint32_t W, uint32_t mode) {
+    auto fwhtB = [&](MTL::Buffer* src, MTL::Buffer* src2, MTL::Buffer* sgn, uint32_t W, uint32_t mode, bool needQ) {
         if (sk("p_fwht")) return;
         e->setComputePipelineState(gpu.pipe("k_rms_fwht_b")); e->setBuffer(src, 0, 0); e->setBuffer(src2 ? src2 : src, 0, 1); e->setBuffer(sgn, 0, 2); e->setBuffer(pXp, 0, 3); e->setBytes(&W, 4, 4); e->setBytes(&mode, 4, 5);
         e->dispatchThreadgroups(MTL::Size(W / 1024, M, 1), MTL::Size(256, 1, 1));
-        quant(W);
+        quant(W, needQ);
     };
-    fusedNorm(pX[c], nullptr, 0, pX[c ^ 1], layers[0].attnNorm, !layers[0].isAttn); c ^= 1;
+    fusedNorm(pX[c], nullptr, 0, pX[c ^ 1], layers[0].attnNorm, !layers[0].isAttn, qIn(0)); c ^= 1;
     for (uint32_t il = 0; il < kLayers; il++) {
         const LayerW& L = layers[il];
         if (!L.isAttn) {
@@ -245,7 +246,7 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
                 e->dispatchThreadgroups(MTL::Size(kGdnVHeads, 16, 1), MTL::Size(32, 1, 1));
                 e->setComputePipelineState(gpu.pipe("k_gdn_gnorm_b")); e->setBuffer(pRaw, 0, 0); e->setBuffer(pZ, 0, 1); e->setBuffer(wbuf, L.ssmNorm, 2); e->setBuffer(pGdnOut, 0, 3); e->dispatchThreadgroups(MTL::Size(M, 48, 1), MTL::Size(128, 1, 1));
             }
-            fwhtB(pGdnOut, nullptr, sg6144, 6144, 2);
+            fwhtB(pGdnOut, nullptr, sg6144, 6144, 2, nq({"ssmout"}));
             dExpandGemm(e, L.ssmOut, pXp, pTmp, Mpad, 6144, H, "ssmout");
         } else {
             const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = kvLayerOff(ai);
@@ -267,16 +268,16 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
                 e->setComputePipelineState(gpu.pipe("k_attn_combine_b")); e->setBuffer(pPM, 0, 0); e->setBuffer(pPL, 0, 1); e->setBuffer(pPA, 0, 2); e->setBuffer(pGate, (uint64_t)base * 6144 * 4, 3); e->setBuffer(pAttnO, (uint64_t)base * 6144 * 4, 4); e->setBytes(&S, 4, 5);
                 e->dispatchThreadgroups(MTL::Size(kHeads, mt, 1), MTL::Size(256, 1, 1));
             }
-            fwhtB(pAttnO, nullptr, sg6144, 6144, 3);
+            fwhtB(pAttnO, nullptr, sg6144, 6144, 3, nq({"wo"}));
             dExpandGemm(e, L.wo, pXp, pTmp, Mpad, 6144, H, "wo");
         }
         if (dbgBase >= 0) dCopy(e, pTmp, dbgBlk, ((uint64_t)il * dbgTokens + dbgBase) * H * 4, M * H);
-        fusedNorm(pX[c], pTmp, (uint64_t)(il * 2 + 1) * H * 4, pX[c ^ 1], layers[il].postNorm, false); c ^= 1;
+        fusedNorm(pX[c], pTmp, (uint64_t)(il * 2 + 1) * H * 4, pX[c ^ 1], layers[il].postNorm, false, nq({"gate", "up"})); c ^= 1;
         dExpandGemm(e, L.ffnGate, pXp, pG, Mpad, H, kFfn, "gate");
         dExpandGemm(e, L.ffnUp, pXp, pU, Mpad, H, kFfn, "up");
-        fwhtB(pG, pU, sg17408, kFfn, 1);
+        fwhtB(pG, pU, sg17408, kFfn, 1, nq({"down"}));
         dExpandGemm(e, L.ffnDown, pXp, pTmp, Mpad, kFfn, H, "down");
-        if (il + 1 < kLayers) { fusedNorm(pX[c], pTmp, (uint64_t)((il + 1) * 2) * H * 4, pX[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn); }
+        if (il + 1 < kLayers) { fusedNorm(pX[c], pTmp, (uint64_t)((il + 1) * 2) * H * 4, pX[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn, qIn(il + 1)); }
         else { uint32_t n = M * H; e->setComputePipelineState(gpu.pipe("k_add2")); e->setBuffer(pX[c], 0, 0); e->setBuffer(pTmp, 0, 1); e->setBuffer(pX[c ^ 1], 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
         c ^= 1;
         if (dbgBase >= 0) dCopy(e, pX[c], dbgRes, ((uint64_t)il * dbgTokens + dbgBase) * H * 4, M * H);
@@ -494,8 +495,7 @@ uint64_t Engine::modelFingerprint() const {
     return h;
 }
 std::string Engine::numericsTag() const {
-    std::string t = int8Mode ? "int8" : "fp16";
-    if (int8Mode) if (const char* x = getenv("BONSAI_I8_EXCLUDE")) t += std::string(":excl=") + x;
+    std::string t = int8Mode ? "int8:" + i8Names() : "fp16";
     if (kvInt8) t += "+kv8";
     return t;
 }
@@ -505,3 +505,13 @@ void Engine::dKvQuant(MTL::ComputeCommandEncoder* e, uint32_t T, uint32_t pos0, 
     e->setComputePipelineState(gpu.pipe("k_kv_quant")); e->setBuffer(kvScrK, 0, 0); e->setBuffer(kvScrV, 0, 1); e->setBuffer(kcache, kvLayerOff(ai), 2); e->setBuffer(vcache, kvLayerOff(ai), 3);
     e->setBuffer(kscale, scLayerOff(ai), 4); e->setBuffer(vscale, scLayerOff(ai), 5); e->setBytes(&pos0, 4, 6); e->dispatchThreadgroups(MTL::Size(8, T, 1), MTL::Size(256, 1, 1));
 }
+
+static const char* const kI8Names[] = {"qkv", "z", "ssmout", "wq", "wk", "wv", "wo", "gate", "up", "down"};
+uint32_t Engine::i8Bit(const char* name) { for (uint32_t i = 0; i < 10; i++) if (strcmp(kI8Names[i], name) == 0) return 1u << i; return 0; }
+bool Engine::setI8(const std::string& spec) {
+    uint32_t m = 0;
+    if (spec == "all") m = (1u << 10) - 1; else if (spec == "ffn") m = i8Bit("gate") | i8Bit("up");
+    else if (!spec.empty() && spec != "none") { size_t p = 0; while (p <= spec.size()) { size_t q = spec.find(',', p); if (q == std::string::npos) q = spec.size(); const uint32_t b = i8Bit(spec.substr(p, q - p).c_str()); if (!b) return false; m |= b; p = q + 1; } }
+    i8Mask = m; int8Mode = m != 0; return true;
+}
+std::string Engine::i8Names() const { std::string r; for (uint32_t i = 0; i < 10; i++) if (i8Mask & (1u << i)) { if (!r.empty()) r += "+"; r += kI8Names[i]; } return r; }
