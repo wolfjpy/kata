@@ -42,3 +42,18 @@ kernel void k_read_wide(device const uchar* W [[buffer(0)]], device float* out [
         for (uint v = lane; v < nvec; v += 32u) { const uint4 q = *(device const uint4*)(rp + v * 16u); acc += float(q.x ^ q.y) + float(q.z ^ q.w); } }
     out[(tgid * 4 + sg) * 32 + lane] = acc;
 }
+
+// Read bandwidth versus per-lane access width W (4, 8, 12 = three adjacent 32-bit loads, 16): lane i reads bytes [i*W, i*W+W) of a 32*W byte segment, simdgroup walks the row.
+template <int W>
+kernel void k_read_w(device const uchar* Wt [[buffer(0)]], device float* out [[buffer(1)]], constant uint& K [[buffer(2)]], constant uint& N [[buffer(3)]],
+                     uint tgid [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
+    const uint row0 = (tgid * 4 + sg) * 4; if (row0 >= N) return; const uint nblk = K / 128u; uint acc = 0u;
+    for (int r = 0; r < 4; r++) { device const uchar* rp = Wt + ulong(min(row0 + uint(r), N - 1u)) * ulong(nblk) * 28ul; const uint rowBytes = nblk * 28u;
+        for (uint off = 0; off + 32u * W <= rowBytes; off += 32u * W) { device const uint* p = (device const uint*)(rp + off + lane * W);
+            if (W == 4) acc += p[0]; else if (W == 8) { acc += p[0] ^ p[1]; } else if (W == 12) { acc += p[0] ^ p[1] ^ p[2]; } else { acc += p[0] ^ p[1] ^ p[2] ^ p[3]; } } }
+    out[(tgid * 4 + sg) * 32 + lane] = float(acc);
+}
+template [[host_name("k_read_w4")]] kernel decltype(k_read_w<4>) k_read_w<4>;
+template [[host_name("k_read_w8")]] kernel decltype(k_read_w<8>) k_read_w<8>;
+template [[host_name("k_read_w12")]] kernel decltype(k_read_w<12>) k_read_w<12>;
+template [[host_name("k_read_w16")]] kernel decltype(k_read_w<16>) k_read_w<16>;
