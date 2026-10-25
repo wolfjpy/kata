@@ -218,3 +218,39 @@ int cmdCache(int argc, char** argv) {
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--cache-dir") dir = argv[++i]; else if (a == "--clear") clr = true; }
     return listCacheDir(dir.empty() ? defaultCacheDir() : dir, clr);
 }
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// bonsai mtp-accept: offline estimate of the speculative acceptance rate in sampling mode. The model generates with the real sampler;
+// at every position the MTP head's distribution q and the target's distribution p (both after top-k/top-p/min-p/temperature) are compared:
+//   deterministic draft (argmax q):   acceptance = p(argmax q)
+//   sampled draft (d ~ q, accept with min(1, p/q), residual resampling on rejection):   acceptance = sum_v min(p(v), q(v))
+int cmdMtpAccept(int argc, char** argv) {
+    std::string model, metallib = "build/bonsai.metallib"; int gen = 200; SamplerParams sp; sp.seed = 7;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--temp") sp.temp = (float)atof(argv[++i]); else if (a == "--top-k") sp.topK = atoi(argv[++i]); else if (a == "--top-p") sp.topP = (float)atof(argv[++i]); else if (a == "--min-p") sp.minP = (float)atof(argv[++i]); else if (a == "--seed") sp.seed = (uint64_t)atoll(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
+    Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; if (!eng.hasMtp) { fprintf(stderr, "model has no MTP block\n"); return 1; } eng.mtpTrack = true; eng.saveHidden = true;
+    Tokenizer tok; if (!tok.load(eng.gg)) return 1; const int V = (int)bonsai::kVocab; std::mt19937_64 rng(sp.seed);
+    struct Case { const char* name; const char* prompt; bool think; } cases[] = {
+        {"prose (no thinking)", "Write a short story about a lighthouse keeper who discovers a message in a bottle.", false},
+        {"code (no thinking)", "Write a Python function that returns all prime numbers below n using a sieve, then explain its complexity.", false},
+        {"reasoning (thinking)", "A train leaves the station at 3 pm travelling at 60 mph. A second train leaves the same station at 4 pm in the same direction at 80 mph. At what time does the second train catch up? Show your reasoning.", true},
+        {"explanation (no thinking)", "Explain how a transformer language model generates text, step by step, for a curious teenager.", false} };
+    double totDet = 0, totSamp = 0, totTop1 = 0; size_t totN = 0;
+    for (auto& c : cases) {
+        eng.resetState(); ChatOpts co; co.thinking = c.think; std::vector<int32_t> ids = tok.encode(renderChat({{"user", c.prompt, ""}}, co), true);
+        int g = eng.feed(ids.data(), (uint32_t)ids.size(), 0, true); (void)g; uint32_t pos = (uint32_t)ids.size();
+        std::vector<float> pl((size_t)V), ql((size_t)V); std::vector<float> hPrev(eng.hPrev(), eng.hPrev() + 5120);
+        int x = sampleToken(eng.logits(), V, sp, rng); double sDet = 0, sSamp = 0, sTop1 = 0; int n = 0;
+        for (int t = 0; t < gen; t++) {
+            eng.mtpRows(1, &x, hPrev.data(), pos, true); memcpy(ql.data(), eng.logits(), (size_t)V * 4);          // q: MTP prediction for position pos+1 from (H[pos-1], x)
+            eng.step(x, pos, -1, true); memcpy(pl.data(), eng.logits(), (size_t)V * 4); memcpy(hPrev.data(), eng.hidden(), 5120 * 4);   // p: the target's distribution for the same position
+            const SparseDist P = samplerDistribution(pl.data(), V, sp), Q = samplerDistribution(ql.data(), V, sp);
+            const int a = Q.ids[0];    // ids are sorted by logit, so ids[0] is the argmax of q
+            sDet += P.prob(a); double ov = 0; for (size_t i = 0; i < Q.ids.size(); i++) ov += std::min(P.prob(Q.ids[i]), Q.w[i] / Q.z); sSamp += ov; int pa = P.ids[0]; sTop1 += (pa == a); n++;
+            x = sampleFromDist(P, rng); pos++;
+        }
+        printf("%-28s  det-argmax draft: %5.1f%%   sampled draft: %5.1f%%   (top-1 agreement %4.1f%%, %d positions)\n", c.name, 100 * sDet / n, 100 * sSamp / n, 100 * sTop1 / n, n);
+        totDet += sDet; totSamp += sSamp; totTop1 += sTop1; totN += (size_t)n;
+    }
+    printf("%-28s  det-argmax draft: %5.1f%%   sampled draft: %5.1f%%   (top-1 agreement %4.1f%%)   => tokens/cycle %.2f -> %.2f\n", "ALL", 100 * totDet / totN, 100 * totSamp / totN, 100 * totTop1 / totN, 1 + totDet / totN, 1 + totSamp / totN);
+    return 0;
+}

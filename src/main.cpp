@@ -30,6 +30,7 @@ static void klStats(const char* label, const float* ref, const float* mine, size
 #include "cli.h"
 int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "mtp-accept") return cmdMtpAccept(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "cache") return cmdCache(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "kl-eval") return cmdKlEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "verify-check") return cmdVerifyCheck(argc, argv);

@@ -5,3 +5,4 @@ int cmdMtpEval(int argc, char** argv);
 int cmdVerifyCheck(int argc, char** argv);
 int cmdKlEval(int argc, char** argv);
 int cmdCache(int argc, char** argv);
+int cmdMtpAccept(int argc, char** argv);
