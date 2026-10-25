@@ -47,7 +47,9 @@ public:
     // Feeds n tokens at positions [pos0, pos0+n) (stepwise for short runs, batched prefill otherwise), keeps the MTP K/V cache current when mtpTrack is set, returns the greedy next token.
     bool mtpTrack = false;
     int feed(const int* toks, uint32_t n, uint32_t pos0, bool wantLogits = true);
-    const float* hPrev() const { return (const float*)hPrevBuf->contents(); }                       // hidden state of the last fed position
+    const float* hPrev() const { return (const float*)hPrevBuf->contents(); }
+    const _Float16* hPrevH() const { return (const _Float16*)hPrevF16->contents(); }
+    void setHPrevH(const _Float16* h) { memcpy(hPrevF16->contents(), h, 5120 * 2); }                       // hidden state of the last fed position
     void setHPrev(const float* h) { memcpy(hPrevBuf->contents(), h, kHiddenBytes); }
     // Speculative verification: runs 2 tokens (positions pos, pos+1) through the main model in one pass. Both GDN states (after token 0 and after token 1) are kept; commit2() picks one.
     void verify2(const int* toks, uint32_t pos, int* argmaxOut);
@@ -80,6 +82,11 @@ public:
     // "all" (every matrix), "ffn" (FFN gate+up only: ~47% of the FLOPs, the error-optimal subset), or a comma list; "" or "none" switches int8 off.
     bool setI8(const std::string& spec);
     std::string i8Names() const;
+    // ---- wide verification (M26): T (up to kMaxVerify) tokens through the trunk in one pass, keeping a GDN snapshot per accepted-prefix length
+    static constexpr uint32_t kMaxVerify = 8;
+    int verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut);   // returns the greedy argmax of row T-1 (all T rows' logits stay in verifyLogits(row))
+    void commitWide(uint32_t accept);                                            // keep the snapshot after `accept` tokens and make the MTP cache current
+    const _Float16* verifyHiddenRow(uint32_t row) const { return (const _Float16*)pHh->contents() + (size_t)row * bonsai::kHidden; }
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
@@ -95,9 +102,13 @@ private:
     MTL::Buffer *mK, *mV, *mTok, *mE, *mHin, *mCat, *mX, *mH, *mQfull, *mKp, *mVp, *mQ, *mGate, *mAttnO, *mTmp, *mY, *mG, *mU, *mPM, *mPL, *mPA;
     MTL::Buffer *pXq, *pSx, *pStage8, *pStageSW, *bufLogitsAll;
     // prefill buffers (rows padded to kMaxChunk)
+    MTL::Buffer *hPrevF16 = nullptr;
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pQh, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
     static constexpr size_t kHiddenBytes = 5120 * 4;
     MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
+    MTL::Buffer *gdnSnap = nullptr, *vTok = nullptr, *vQkv = nullptr; int vBase = 0;   // snapshots of the verify window (snap[0] = the input state) and the window's tokens
+    void dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t MT);
+
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
     void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0);

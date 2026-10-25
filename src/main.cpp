@@ -29,6 +29,7 @@ static void klStats(const char* label, const float* ref, const float* mine, size
 }
 #include "cli.h"
 int main(int argc, char** argv) {
+    setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "mtp-accept") return cmdMtpAccept(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "cache") return cmdCache(argc, argv);
@@ -37,10 +38,10 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "mtp-eval") return cmdMtpEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
     if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
-    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false; std::string i8spec;
+    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0, vwidth = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false; std::string i8spec;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
-        if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--verify") verifyN = atoi(argv[++i]);
+        if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--verify") verifyN = atoi(argv[++i]); else if (a == "--vwidth") vwidth = atoi(argv[++i]);
         else if (a == "--ref-dir") refDir = argv[++i]; else if (a == "--ref-logits") refLogits = argv[++i]; else if (a == "--ctx") ctx = atoi(argv[++i]); else if (a == "--skip") skipArg = argv[++i];
         else if (a == "--prefill") usePrefill = true; else if (a == "--repeat") repeat = atoi(argv[++i]); else if (a == "--int8") int8 = true; else if (a == "--i8") i8spec = argv[++i]; else if (a == "--nlogits") nlogits = atoi(argv[++i]);
         else if (a == "--dump-logits") dumpLogits = argv[++i]; else if (a == "--cmp-logits") cmpLogits = argv[++i];
@@ -102,6 +103,28 @@ int main(int argc, char** argv) {
         auto v0 = std::chrono::steady_clock::now();
         for (int i = 0; i < verifyN; i++) { eng.verify2(vt, (uint32_t)ntok, am); eng.commit2(false); }
         double vdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - v0).count(); printf("verify2: %d passes in %.3f s = %.2f ms/pass\n", verifyN, vdt, vdt / verifyN * 1e3);
+    }
+    if (vwidth > 0) {   // wide verification: T tokens per round, accept only row 0 -> must reproduce the plain greedy continuation
+        const int T = vwidth; if (T < 2 || T > (int)Engine::kMaxVerify) { fprintf(stderr, "--vwidth 2..%u\n", Engine::kMaxVerify); return 1; }
+        std::vector<int> seq = toks; int am[Engine::kMaxVerify]; double best = 1e9; int mismatch = 0;
+        for (int r = 0; r < std::max(1, repeat); r++) {
+            eng.resetState();
+            eng.prefill(seq.data(), (uint32_t)seq.size(), 0, -1, true, 1);   // build the context once
+            int next = eng.logits() ? 0 : 0; { const float* lg = eng.logits(); for (int k = 1; k < (int)nv; k++) if (lg[k] > lg[next]) next = k; }
+            uint32_t pos = (uint32_t)seq.size(); int base = next; auto t0 = std::chrono::steady_clock::now();
+            for (int g = 0; g < gen; g++) {
+                int win[Engine::kMaxVerify]; win[0] = next; for (int k = 1; k < T; k++) win[k] = next;   // dummy drafts (accepted prefix is always 1 here)
+                if (getenv("BONSAI_USE_V2")) { int vt[2] = {win[0], win[0]}; eng.verify2(vt, pos, am); } else eng.verifyWide(win, (uint32_t)T, pos, am);
+                if (g == 0) { for (int k = 1; k < (int)nv; k++) if (eng.verifyLogits(0)[k] > eng.verifyLogits(0)[base]) base = k; }
+                printf("gen[%d] = %d\n", g, am[0]); fflush(stdout);
+                if (getenv("BONSAI_USE_V2")) eng.commit2(false); else eng.commitWide(1); next = am[0]; pos += 1; fflush(stdout);
+            }
+            double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            printf("wide T=%d: %d rounds in %.3f s = %.2f ms/round (accepting 1 token/round)\n", T, gen, dt, dt / gen * 1e3);
+            best = std::min(best, dt / gen * 1e3);
+            eng.resetState();
+        }
+        printf("best: %.2f ms/round\n", best); (void)mismatch;
     }
     return 0;
 }

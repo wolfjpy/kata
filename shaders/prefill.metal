@@ -477,3 +477,39 @@ kernel void k_expand_ptq1_v2(device const uchar* W [[buffer(0)]], device half* o
     device half* o = out + (ulong(nt) * ulong(K) + ulong(kb) * 128ul + s * 8ul) * 64ul + rg * 4u;
     for (uint j = 0; j < 8; j++) { *(device half4*)(o + ulong(j) * 64ul) = half4(half(t[0][j] * d[0]), half(t[1][j] * d[1]), half(t[2][j] * d[2]), half(t[3][j] * d[3])); }
 }
+
+// ---- GDN recurrence for a verify window: like k_gdn_rec_b2, but the state is never committed in place; instead the state after token t is written to snapshot t
+// (snapshot[t] = state after tokens 0..t of the window, snapshot[0] = the input state). The caller picks the snapshot matching the accepted prefix.
+kernel void k_gdn_rec_snap(device const float* conv [[buffer(0)]], device const float* qk [[buffer(1)]], device const float* gb [[buffer(2)]], device float* stateIn [[buffer(3)]],
+                           device float* snaps [[buffer(4)]], device float* raw [[buffer(5)]], constant uint& M [[buffer(6)]], constant uint& snapStride [[buffer(7)]],
+                           uint2 tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    const uint hv = tg.x, cg = tg.y, hk = hv % bonsai::kGdnKHeads, part = lane & 3u, v = cg * 8u + (lane >> 2);
+    const ulong off = ulong(hv) * 16384ul + ulong(part) * 32ul * 128ul + v;
+    float st[32];
+    for (uint k = 0; k < 32; k++) st[k] = stateIn[off + k * 128u];
+    for (uint t = 0; t < M; t++) {
+        device const float4* qp = (device const float4*)(qk + ulong(t) * 4096ul + hk * 128 + part * 32);
+        device const float4* kp = (device const float4*)(qk + ulong(t) * 4096ul + 2048ul + hk * 128 + part * 32);
+        const float ge = gb[t * 96u + hv], beta = gb[t * 96u + 48u + hv];
+        float skv = 0.0f;
+        for (uint k4 = 0; k4 < 8; k4++) { float4 kk = kp[k4]; st[4*k4] *= ge; st[4*k4+1] *= ge; st[4*k4+2] *= ge; st[4*k4+3] *= ge; skv += st[4*k4] * kk.x + st[4*k4+1] * kk.y + st[4*k4+2] * kk.z + st[4*k4+3] * kk.w; }
+        skv += simd_shuffle_xor(skv, 1); skv += simd_shuffle_xor(skv, 2);
+        const float d = (conv[ulong(t) * bonsai::kGdnQkvDim + 4096u + hv * 128 + v] - skv) * beta;
+        float y = 0.0f;
+        for (uint k4 = 0; k4 < 8; k4++) { float4 kk = kp[k4], qq = qp[k4]; st[4*k4] += kk.x * d; st[4*k4+1] += kk.y * d; st[4*k4+2] += kk.z * d; st[4*k4+3] += kk.w * d; y += st[4*k4] * qq.x + st[4*k4+1] * qq.y + st[4*k4+2] * qq.z + st[4*k4+3] * qq.w; }
+        y += simd_shuffle_xor(y, 1); y += simd_shuffle_xor(y, 2);
+        if (part == 0) raw[ulong(t) * 6144ul + hv * 128 + v] = y * 0.08838834764831845f;
+        device float* so = snaps + (ulong(t) + 1ul) * snapStride;
+        for (uint k = 0; k < 32; k++) so[off + k * 128u] = st[k];
+    }
+}
+
+// ---- conv state after accepting F tokens of a verify window: the window's first F qkv rows extend the old 3-column history (oldest first).  c in [0, 10240). ----
+kernel void k_gdn_conv_snap(device const float* qkv [[buffer(0)]], device const float* old [[buffer(1)]], device float* out [[buffer(2)]], constant uint& F [[buffer(3)]], uint c [[thread_position_in_grid]]) {
+    const uint C = bonsai::kGdnQkvDim; if (c >= C) return;
+    // logical history is [x(t-3), x(t-2), x(t-1)] with the window's tokens appended after it
+    for (uint k = 0; k < 3; k++) {
+        const int idx = int(F) + int(k) - 3;                       // index into the extended history: <0 -> old state
+        out[k * C + c] = idx < 0 ? old[(uint)(idx + 3) * C + c] : qkv[(ulong)idx * C + c];
+    }
+}
