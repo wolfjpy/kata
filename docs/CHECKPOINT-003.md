@@ -176,6 +176,10 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 | 本轮探针 | `docs/probes/simdgroup_mma_probe.*`、`matmul2d_mixed_type_probe.cpp`、`residency_untracked_experiment.diff`;`tools/{weight_read_probe,kv_read_probe,bench_gemv2,probe_flash,alu_probe,layout_probe}.cpp` |
 | 草稿接受率日志 | `/tmp/ss_*.log`(临时);汇总在 `reports/M7-speculation-options.md` |
 
+## 10.5 后续(2026-10-25):仓库评估与下一阶段方案
+
+完整的通读评估、今天新测的三件事(有损开关组合后 top-1 99.58% 不达标、一次性进程必付 3.3 s 权重锁页、三条前向路径算术不一致)、以及 M18–M24 的下一阶段方案,见 **`reports/REVIEW-01-repo-assessment.md`**。该文档是当前的计划来源;本文档保留 M8–M17 的结果。
+
 ## 11. 路线图的最终结果(2026-10-25)
 
 | 里程碑 | 结果 |
