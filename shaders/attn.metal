@@ -5,11 +5,11 @@
 kernel void k_attn_prep(device const float* qfull [[buffer(0)]], device const float* kproj [[buffer(1)]], device const float* vproj [[buffer(2)]],
                         device const float* qnorm [[buffer(3)]], device const float* knorm [[buffer(4)]],
                         device float* qout [[buffer(5)]], device float* gate_out [[buffer(6)]],
-                        device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos [[buffer(9)]],
+                        device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos [[buffer(9)]], constant uint& cacheOff [[buffer(10)]],
                         uint h [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float xs[256]; threadgroup float part[8];
     if (h >= 28) {   // value head: copy to cache
-        uint vh = h - 28; vcache[ulong(pos) * bonsai::kKvDim + vh * 256 + tid] = half(vproj[vh * 256 + tid]);
+        uint vh = h - 28; vcache[ulong(pos - cacheOff) * bonsai::kKvDim + vh * 256 + tid] = half(vproj[vh * 256 + tid]);
         return;
     }
     float v; device const float* w;
@@ -28,11 +28,11 @@ kernel void k_attn_prep(device const float* qfull [[buffer(0)]], device const fl
         float a = xs[tid], b = xs[tid + 32];
         outv = a * c - b * s;
         float outv2 = a * s + b * c;
-        if (h < 24) qout[h * 256 + tid + 32] = outv2; else kcache[ulong(pos) * bonsai::kKvDim + (h - 24) * 256 + tid + 32] = half(outv2);
+        if (h < 24) qout[h * 256 + tid + 32] = outv2; else kcache[ulong(pos - cacheOff) * bonsai::kKvDim + (h - 24) * 256 + tid + 32] = half(outv2);
     }
     if (tid >= 32 && tid < 64) { /* handled by the lower half above */ }
     else if (tid < 32 || tid >= 64) {
-        if (h < 24) qout[h * 256 + tid] = outv; else kcache[ulong(pos) * bonsai::kKvDim + (h - 24) * 256 + tid] = half(outv);
+        if (h < 24) qout[h * 256 + tid] = outv; else kcache[ulong(pos - cacheOff) * bonsai::kKvDim + (h - 24) * 256 + tid] = half(outv);
     }
 }
 
