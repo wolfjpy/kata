@@ -25,6 +25,7 @@ int cmdTokenize(int argc, char** argv) {
 #include "engine.h"
 #include "spec.h"
 #include <chrono>
+#include <thread>
 #include <iostream>
 
 namespace {
@@ -88,10 +89,13 @@ int cmdRun(int argc, char** argv, bool interactive) {
         int first = S.feed(ids); std::vector<int32_t> gen; generate(first, gen); report(); return 0;
     }
     // interactive chat: keep the KV cache and the GDN state; each turn only prefills the new suffix
+    std::thread warm([&]() { S.eng.warmup(); });   // hides the ~3 s cold start behind the time the user spends typing
+    struct Joiner { std::thread& t; ~Joiner() { if (t.joinable()) t.join(); } } joiner{warm};
     fprintf(stderr, "bonsai chat (%s path). Empty line or /quit to exit, /reset to start over.\n", fast ? "int8 fast" : "exact");
     bool firstTurn = true; std::string line;
     while (true) {
         fputs("\n> ", stdout); fflush(stdout); if (!std::getline(std::cin, line)) break; if (line == "/quit" || line.empty()) break;
+        if (warm.joinable()) warm.join();
         if (line == "/reset") { S.eng.resetState(); S.pos = 0; firstTurn = true; fprintf(stderr, "[reset]\n"); continue; }
         std::string suffix;
         if (firstTurn) { std::vector<Msg> m; if (!system.empty()) m.push_back({"system", system, ""}); m.push_back({"user", line, ""}); suffix = renderChat(m, co); }

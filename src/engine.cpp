@@ -474,3 +474,13 @@ void Engine::verify2(const int* toks, uint32_t pos, int* argmaxOut) {
 }
 void Engine::commit2(bool acceptBoth) { stCur = (stCur + (acceptBoth ? 2 : 1)) % 3; gdnState = gdnSet[stCur]; convState = convSet[stCur]; }
 void Engine::verifyHidden(int row, float* dst) const { const _Float16* h = (const _Float16*)pHh->contents() + (size_t)row * 5120; for (int i = 0; i < 5120; i++) dst[i] = (float)h[i]; }
+
+// Runs one tiny forward of every kind (prefill, step, verify, MTP) and resets the state. The first use of the 6.4 GB weight mapping costs ~3 s (OS page mapping + first dispatches);
+// calling this from a background thread while the user is still typing moves that cost out of the first reply.
+void Engine::warmup() {
+    int dummy[32]; for (int i = 0; i < 32; i++) dummy[i] = 760 + i;
+    const bool oldTrack = mtpTrack; mtpTrack = hasMtp;
+    prefill(dummy, 32, 0, -1, true, 1); step(dummy[0], 32, -1, true);
+    if (hasMtp) { int tk[2] = {dummy[1], dummy[2]}; int am[2]; verify2(tk, 33, am); commit2(false); }
+    mtpTrack = oldTrack; resetState();
+}

@@ -34,6 +34,7 @@ public:
     // Runs one token at position `pos`; returns the greedy next token. If dbgSlot >= 0 the per-layer residual and block outputs are recorded.
     int step(int token, uint32_t pos, int dbgSlot = -1, bool wantLogits = true);
     void resetState();
+    void warmup();   // dummy forward of every kind; safe to run on a background thread before the first real call
     static constexpr uint32_t kMaxChunk = 1024;
     // Batched prefill of M (<= kMaxChunk) tokens starting at position pos0 (exact fp16 path). Returns the greedy next token (or -1 if !wantLogits).
     int prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase = -1, bool wantLogits = true, uint32_t nLogits = 1);
