@@ -20,6 +20,8 @@ build/bonsai run  --model $M --prompt "..." --no-think --temp 0    # thinking of
 build/bonsai run  --model $M --raw --file prompt.txt               # pre-rendered prompt (special tokens parsed)
 build/bonsai run  --model $M --prompt "..." --no-spec              # plain decoding (MTP speculative decoding is on by default and exact)
 build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill path: ~10 percent faster, NOT within the quality gate (see docs/reports/M5b-prefill-optimization.md)
+build/bonsai run  --model $M --system "$(cat long_system_prompt.txt)" --prompt "..."   # the second run restores the system prompt from the disk cache
+build/bonsai cache [--clear]                                        # list / delete the persistent prefix cache (default ~/.cache/bonsai, 40 GB budget)
 build/bonsai tokenize --model $M --text "hello"                    # token ids, identical to llama-tokenize
 ```
 
@@ -37,6 +39,7 @@ make build/bench_gemv  # GEMV microbenchmark on real tensors (fp32 activations);
 build/bonsai mtp-eval     --model $M --ids ... --gen 96     # how often the MTP head predicts the main model's greedy token
 build/bonsai verify-check --model $M --ids ...              # two-token verification pass vs the exact decode path (KL, top-1)
 build/bonsai kl-eval      --model $M --file corpus.txt --tokens 24576   # int8 prefill vs exact prefill on a corpus
+sh tools/test_cache.sh                                       # regression test of the prefix cache (needs the model)
 make build/probe_flash && build/probe_flash                 # prefill attention kernel: correctness vs CPU and speed per context length
 ```
 
@@ -54,5 +57,7 @@ Measured on the Mac mini M6 (the GPU throttles under sustained load, so repeated
 | prefill, exact fp16, 1024-token chunk | **257 tok/s** | |
 | prefill, exact fp16, 7.3K-token prompt | **213 tok/s** | |
 | prefill, int8 (`--fast`, opt-in) | 269 to 283 tok/s | |
+
+Persistent prefix cache (M9): a prompt whose token prefix was seen before restores its complete state from `~/.cache/bonsai` instead of prefilling it. A 2.9K-token system prompt: 15 s of prefill becomes 0.1 s of restore plus the 21 new tokens; a repeated 3.6K-token prompt: 18.6 s becomes 0.03 s. Outputs are byte-identical to the uncached run. Options: `--no-cache`, `--cache-dir`, `--cache-gb`, `--cache-min` (see `docs/reports/M9-prefix-cache.md`; checkpoints contain the prompt's KV, so use `--no-cache` for sensitive prompts).
 
 Quality: speculative decoding keeps the output distribution unchanged (verification pass vs exact decode: mean KL 4.3e-6, top-1 100 percent over 830 positions). The exact prefill path matches the fp32 golden logits (mean KL 1.4e-7). The int8 path does not meet the proposed gate (mean KL 4.4e-4, top-1 99.54 percent on 1536 positions), so it is off by default.

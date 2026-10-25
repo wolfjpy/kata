@@ -1,12 +1,12 @@
 # Pinned versions (rule: always the latest available; re-verify at the start of every phase)
-# Last verified: 2026-10-24
+# Last verified: 2026-10-25
 
 macOS                 27.0.1 (softwareupdate: no updates)
 Xcode                 27.1 (27A9275), SDK MacOSX27.0
 Metal compiler        32023.921 (metalfe-32023.921.6), max language version metal4.1
 metal-cpp             apple/metal-cpp main @ 8cdde68ae36a636c84cbb48ebcbc8f3b60251ea0 (macOS 27.0.1, 2026-09-22), vendored in third_party/metal-cpp
 Reference runtime     PrismML-Eng/llama.cpp branch prism @ b3ebc47c286e58ead5fc6abb3655974d3bcc1355 (2026-10-24), checked out outside the repo in ../../refs/llama.cpp-prism
-                      (prism head 97ea5ae re-checked at the start of M4 to M5b: six newer commits, all CUDA/x86/host-sampler, none touch ggml-metal, so the Metal baseline numbers stay valid)
+                      (prism head re-checked at the start of M4 to M5b (97ea5ae) and of M9 (dc21b2c): the newer commits are all CUDA/x86/host-sampler, none touch ggml-metal, so the Metal baseline numbers stay valid)
 Model                 ollama mannix/Bonsai-2-27B:mtp-ptq1_0, blob sha256 174c9c6584e118766d5511e00a84fd8a31d146248915a726cfac8e6d140c6204 (6397969920 bytes), stored outside the repo in ../../models/
 Qwen3.8-27B (HF)      sha 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
 Bonsai-2 GGUF (HF)    prism-ml/Ternary-Bonsai-2-27B-gguf sha b072e1d3b35a0a630cece372c2127528e0994386
