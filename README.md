@@ -21,6 +21,7 @@ build/bonsai run  --model $M --raw --file prompt.txt               # pre-rendere
 build/bonsai run  --model $M --prompt "..." --no-spec              # plain decoding (MTP speculative decoding is on by default and exact)
 build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill path: ~10 percent faster, NOT within the quality gate (see docs/reports/M5b-prefill-optimization.md)
 build/bonsai run  --model $M --system "$(cat long_system_prompt.txt)" --prompt "..."   # the second run restores the system prompt from the disk cache
+build/bonsai run  --model $M --prompt "..." --kv int8             # int8 KV cache: half the KV memory, +14% decode / +10% prefill at 29K context (lossy: KL 1.3e-4, top-1 99.71%)
 build/bonsai cache [--clear]                                        # list / delete the persistent prefix cache (default ~/.cache/bonsai, 40 GB budget)
 build/bonsai tokenize --model $M --text "hello"                    # token ids, identical to llama-tokenize
 ```
