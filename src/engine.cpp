@@ -484,3 +484,14 @@ void Engine::warmup() {
     if (hasMtp) { int tk[2] = {dummy[1], dummy[2]}; int am[2]; verify2(tk, 33, am); commit2(false); }
     mtpTrack = oldTrack; resetState();
 }
+
+uint64_t Engine::modelFingerprint() const {
+    uint64_t h = 1469598103934665603ull ^ (uint64_t)gg.mapLen; const uint8_t* p = (const uint8_t*)gg.map; const size_t n = std::min<size_t>(gg.mapLen, 65536);
+    for (size_t i = 0; i < n; i++) h = (h ^ p[i]) * 1099511628211ull;
+    return h;
+}
+std::string Engine::numericsTag() const {
+    std::string t = int8Mode ? "int8" : "fp16";
+    if (int8Mode) if (const char* x = getenv("BONSAI_I8_EXCLUDE")) t += std::string(":excl=") + x;
+    return t;
+}

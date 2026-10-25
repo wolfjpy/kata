@@ -55,6 +55,18 @@ public:
     const float* verifyLogits(int row) const { return (const float*)bufLogitsAll->contents() + (size_t)row * bonsai::kVocab; }
     void verifyHidden(int row, float* dst) const;   // post-final-norm hidden state of verified token `row`
     uint32_t gemmGroup = getenv("BONSAI_GM") ? (uint32_t)atoi(getenv("BONSAI_GM")) : 32u;   // GEMM tile order: groups of g consecutive M tiles share a B strip (0 = N-fast, much slower)
+    // ---- raw access to the persistent state for the prefix cache (src/ckpt.cpp)
+    uint8_t* gdnPtr() const { return (uint8_t*)gdnState->contents(); }
+    size_t gdnBytes() const { return gdnState->length(); }
+    uint8_t* convPtr() const { return (uint8_t*)convState->contents(); }
+    size_t convBytes() const { return convState->length(); }
+    uint8_t* kvPtr(uint32_t attnLayer, bool value) const { return (uint8_t*)(value ? vcache : kcache)->contents() + (size_t)attnLayer * maxCtx * bonsai::kKvDim * 2; }
+    uint8_t* mtpKvPtr(bool value) const { return (uint8_t*)(value ? mV : mK)->contents(); }
+    uint8_t* hPrevPtr() const { return (uint8_t*)hPrevBuf->contents(); }
+    float* logitsMut() const { return (float*)bufLogits->contents(); }
+    uint32_t numAttn() const { return nAttn; }
+    uint64_t modelFingerprint() const;      // model file size + hash of its first 64 KiB
+    std::string numericsTag() const;        // everything that changes the numbers a prefill produces (int8 path, exclusions, ...)
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
