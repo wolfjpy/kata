@@ -138,9 +138,9 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 | **M11 ✅(2026-10-25,`reports/M11-int8-kv.md`:KL 1.3e-4、top-1 99.71%;29K 上下文解码 +14%、预填充 +10%,内存减半;短上下文无速度收益,默认关)** | **int8 KV**(每 head-row 一个 scale;`half×char` 原生 matmul2d,K 缩放 S 的列、V 缩放 P) | 24K 语料 KL ≤ 1e-3、top-1 ≥ 99.7%;32K 解码 +8–10%;内存减半 | 长上下文解码、64K 内存 |
 | **M12 ⏹(2026-10-25,`reports/M12-weight-layout.md`:暂存宽读取原型没有提升,闸门未达到,不实现)** | **权重分平面重排**(`bonsai-pack` 工具生成 planar 文件,GEMV/展开/embedding 读 16 字节向量)| 数值逐位一致;普通解码 19.8 → ≥ 21.2 tok/s | 解码 +8–10% |
 | **M13 ✅(2026-10-25,`reports/M13-fast-ffn.md`:KL 7.5e-5、top-1 99.87%,预填充 +7–9.5%)** | **FFN gate+up 的 int8 预填充开关**(`--fast-ffn`,有损,默认关) | 24.5K 语料 top-1 ≥ 99.7%(已测 99.80%),预填充 +8–10% | 预填充 +8–10% |
-| **M14** | **宽验证微基准闸门**:`matmul2d` 每 simdgroup 私有 tile,M=8,权重 LUT 解码进私有 TG tile;测 T=4/8 | **T=8 每矩阵 ≤ 1.5 × T=2(≈ 260 µs @ ffn_gate)才算通过**;否则停止 DFlash2,在报告里结案 | 闸门 |
-| **M15** | (仅当 M14 通过)ReplaySSM 重放 + 宽验证接入引擎 + 采样兼容 | verify-check:KL ≤ 1e-5;T=4/8 验证周期 ≤ 1.5× T=2 | DFlash2 的前提 |
-| **M16** | (仅当 M15 完成)DFlash2 移植(Q8_0 或 Q4_K_M 草稿权重 + 宽 GEMV;上下文物化器、动态卷积、选择器、滑窗注意力) | 与 llama.cpp `draft-dflash` 的接受长度一致(代码 ~5.1);无损;代码/推理 ≥ 50 tok/s | 解码 2×(代码/推理) |
+| **M14 ❌(2026-10-25,`reports/M14-wide-verify-gate.md`:T=8 是 T=2 的 2.2–2.3×,闸门 1.5× 未通过)** | **宽验证微基准闸门**:`matmul2d` 每 simdgroup 私有 tile,M=8,权重 LUT 解码进私有 TG tile;测 T=4/8 | **T=8 每矩阵 ≤ 1.5 × T=2(≈ 260 µs @ ffn_gate)才算通过**;否则停止 DFlash2,在报告里结案 | 闸门 |
+| **M15 ⏹(M14 未通过,取消)** | (仅当 M14 通过)ReplaySSM 重放 + 宽验证接入引擎 + 采样兼容 | verify-check:KL ≤ 1e-5;T=4/8 验证周期 ≤ 1.5× T=2 | DFlash2 的前提 |
+| **M16 ⏹(M14 未通过,取消)** | (仅当 M15 完成)DFlash2 移植(Q8_0 或 Q4_K_M 草稿权重 + 宽 GEMV;上下文物化器、动态卷积、选择器、滑窗注意力) | 与 llama.cpp `draft-dflash` 的接受长度一致(代码 ~5.1);无损;代码/推理 ≥ 50 tok/s | 解码 2×(代码/推理) |
 | **M17** | 小项:suffix drafter + 在线成本策略(有宽验证后才有意义);单命令缓冲区草稿+验证;草稿词表子集(131K 行) | 各自的收益 ≥ 1% 才保留 | ≤ 5% |
 
 顺序理由:M9–M13 都是有数据支撑、风险低的收益;M14 是 DFlash2 的决策闸门,放在 M13 之后,但如果前面的里程碑出现阻塞可以提前做。
