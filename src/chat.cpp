@@ -31,18 +31,39 @@ std::string renderChat(const std::vector<Msg>& msgs, const ChatOpts& o) {
 }
 
 // llama.cpp's default chain: top-k -> top-p -> min-p -> temperature -> sample
-int sampleToken(const float* logits, int n, const SamplerParams& p, std::mt19937_64& rng) {
-    if (p.temp <= 0.0f) { int b = 0; for (int i = 1; i < n; i++) if (logits[i] > logits[b]) b = i; return b; }
+// The distribution is returned unnormalised (w, with z = sum) so that sampleToken keeps its exact arithmetic.
+SparseDist samplerDistribution(const float* logits, int n, const SamplerParams& p) {
     const int K = std::min(p.topK > 0 ? p.topK : n, n);
-    std::vector<int> idx(n); std::iota(idx.begin(), idx.end(), 0);
-    std::partial_sort(idx.begin(), idx.begin() + K, idx.end(), [&](int a, int b) { return logits[a] > logits[b] || (logits[a] == logits[b] && a < b); });
-    idx.resize(K);
+    std::vector<int> idx;
+    if (K <= 64) {   // one pass over the logits keeping the K best (ties: the lower index wins, as in the full sort); about 0.2 ms for the 248K vocabulary
+        idx.reserve((size_t)K + 1); float thr = -INFINITY;   // thr = the K-th best logit once K are held; anything not above it cannot enter
+        for (int i = 0; i < n; i++) {
+            const float v = logits[i];
+            if (!(v > thr)) { if ((int)idx.size() == K) continue; }
+            size_t pos = idx.size(); while (pos > 0 && logits[idx[pos - 1]] < v) pos--;
+            idx.insert(idx.begin() + (long)pos, i); if ((int)idx.size() > K) idx.pop_back();
+            if ((int)idx.size() == K) thr = logits[idx.back()];
+        }
+    } else {
+        idx.resize((size_t)n); std::iota(idx.begin(), idx.end(), 0);
+        std::partial_sort(idx.begin(), idx.begin() + K, idx.end(), [&](int a, int b) { return logits[a] > logits[b] || (logits[a] == logits[b] && a < b); });
+        idx.resize((size_t)K);
+    }
     std::vector<double> pr(K); double mx = logits[idx[0]], z = 0; for (int i = 0; i < K; i++) { pr[i] = std::exp((double)logits[idx[i]] - mx); z += pr[i]; } for (auto& v : pr) v /= z;
     int keep = K;
     if (p.topP < 1.0f) { double cum = 0; keep = 0; for (int i = 0; i < K; i++) { cum += pr[i]; keep = i + 1; if (cum >= p.topP) break; } }
     if (p.minP > 0.0f) { int k2 = 0; for (int i = 0; i < keep; i++) if (pr[i] >= (double)p.minP * pr[0]) k2 = i + 1; else break; keep = std::max(1, k2); }
-    std::vector<double> w(keep); double zz = 0; for (int i = 0; i < keep; i++) { w[i] = std::exp(((double)logits[idx[i]] - mx) / p.temp); zz += w[i]; }
-    std::uniform_real_distribution<double> U(0.0, zz); double r = U(rng), acc = 0;
-    for (int i = 0; i < keep; i++) { acc += w[i]; if (r <= acc) return idx[i]; }
-    return idx[keep - 1];
+    SparseDist d; d.ids.assign(idx.begin(), idx.begin() + keep); d.w.resize((size_t)keep); d.z = 0;
+    for (int i = 0; i < keep; i++) { d.w[(size_t)i] = std::exp(((double)logits[idx[(size_t)i]] - mx) / p.temp); d.z += d.w[(size_t)i]; }
+    return d;
+}
+double SparseDist::prob(int token) const { for (size_t i = 0; i < ids.size(); i++) if (ids[i] == token) return w[i] / z; return 0.0; }
+int sampleFromDist(const SparseDist& d, std::mt19937_64& rng) {
+    std::uniform_real_distribution<double> U(0.0, d.z); double r = U(rng), acc = 0;
+    for (size_t i = 0; i < d.ids.size(); i++) { acc += d.w[i]; if (r <= acc) return d.ids[i]; }
+    return d.ids.back();
+}
+int sampleToken(const float* logits, int n, const SamplerParams& p, std::mt19937_64& rng) {
+    if (p.temp <= 0.0f) { int b = 0; for (int i = 1; i < n; i++) if (logits[i] > logits[b]) b = i; return b; }
+    return sampleFromDist(samplerDistribution(logits, n, p), rng);
 }

@@ -14,4 +14,8 @@ std::string renderChat(const std::vector<Msg>& msgs, const ChatOpts& o);
 std::string reasoningInstructions(const ChatOpts& o);
 
 struct SamplerParams { float temp = 1.0f; int topK = 20; float topP = 0.95f; float minP = 0.05f; uint64_t seed = 0; };
+// the sampler's distribution over the surviving tokens (after top-k, top-p, min-p and temperature), unnormalised: probability of ids[i] = w[i] / z
+struct SparseDist { std::vector<int> ids; std::vector<double> w; double z = 0; double prob(int token) const; };
+SparseDist samplerDistribution(const float* logits, int n, const SamplerParams& p);   // requires p.temp > 0
+int sampleFromDist(const SparseDist& d, std::mt19937_64& rng);
 int sampleToken(const float* logits, int n, const SamplerParams& p, std::mt19937_64& rng);   // temp <= 0 -> greedy
