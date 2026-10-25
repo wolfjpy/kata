@@ -185,3 +185,115 @@ kernel void k_gemv_lut2v(device const uchar* W [[buffer(0)]], device const half2
 }
 #define INSTV(NR, NSG, VAR) template [[host_name("k_gemv_lut2v_v" #VAR "_nr" #NR "_sg" #NSG)]] kernel void k_gemv_lut2v<NR, NSG, VAR>(device const uchar*, device const half2*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
 INSTV(4, 4, 0) INSTV(4, 4, 1) INSTV(2, 4, 0) INSTV(8, 4, 0) INSTV(4, 8, 0) INSTV(4, 2, 0) INSTV(3, 4, 0)
+
+// ---- wide verification: NP half2 token pairs (T = 2*NP tokens) share one pass over the weights; activations interleaved as [K][NP] of half2 ----
+template <int NR, int NSG, int NP>
+kernel void k_gemv_lutp(device const uchar* W [[buffer(0)]], device const half2* x [[buffer(1)]], device float* y [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& N [[buffer(4)]],
+                        uint tgid [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup uint4 lutv[256];
+    for (uint b = tid; b < 256u; b += NSG * 32u) {
+        uint p3[6] = {1u, 3u, 9u, 27u, 81u, 243u}; half t[8];
+        for (uint n = 0; n < 5; n++) t[n] = half(float(int((b * p3[n + 1]) >> 8) - 3 * int((b * p3[n]) >> 8) - 1)); t[5] = 0.0h; t[6] = 0.0h; t[7] = 0.0h;
+        lutv[b] = uint4(as_type<uint>(half2(t[0], t[1])), as_type<uint>(half2(t[2], t[3])), as_type<uint>(half2(t[4], t[5])), as_type<uint>(half2(t[6], t[7])));
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    threadgroup const half* lutH = (threadgroup const half*)lutv;
+    const uint row0 = (tgid * NSG + sg) * NR; if (row0 >= N) return;
+    const uint nblk = K / 128u, ix = lane >> 3, it = lane & 7u, qn = it >> 1;
+    float2 acc[NR][NP]; for (int r = 0; r < NR; r++) for (int p = 0; p < NP; p++) acc[r][p] = float2(0.0f);
+    device const uchar* rowp[NR]; for (int r = 0; r < NR; r++) rowp[r] = W + ulong(min(row0 + uint(r), N - 1u)) * ulong(nblk) * 28ul;
+    for (uint b = ix; b < nblk; b += 4) {
+        device const half2* xb = x + ulong(b) * 128ul * NP;
+        half2 ya[2][5][NP], yb[5][NP], yq[NP];
+        for (uint k = 0; k < 2; k++) for (uint n = 0; n < 5; n++) for (int p = 0; p < NP; p++) ya[k][n][p] = xb[(n * 16 + 2 * it + k) * NP + p];
+        for (uint n = 0; n < 5; n++) for (int p = 0; p < NP; p++) yb[n][p] = xb[(80 + n * 8 + it) * NP + p];
+        for (int p = 0; p < NP; p++) yq[p] = xb[(120 + qn * 2 + (it & 1u)) * NP + p];
+        for (int r = 0; r < NR; r++) {
+            device const uchar* bp = rowp[r] + b * 28u;
+            const ushort w01 = *(device const ushort*)(bp + 2 * it);
+            const uint c0 = w01 & 0xffu, c1 = w01 >> 8, c2 = bp[16 + it], cq = bp[24 + (it & 1u)];
+            const float d = float(as_type<half>(*(device const ushort*)(bp + 26)));
+            const uint4 e0 = lutv[c0], e1 = lutv[c1], e2 = lutv[c2];
+            const half2 p00 = as_type<half2>(e0.x), p01 = as_type<half2>(e0.y), p02 = as_type<half2>(e0.z);
+            const half2 p10 = as_type<half2>(e1.x), p11 = as_type<half2>(e1.y), p12 = as_type<half2>(e1.z);
+            const half2 p20 = as_type<half2>(e2.x), p21 = as_type<half2>(e2.y), p22 = as_type<half2>(e2.z);
+            const half tq = lutH[cq * 8 + qn];
+            for (int p = 0; p < NP; p++) {
+                half2 a0 = ya[0][0][p] * half2(p00.x); a0 = fma(ya[0][1][p], half2(p00.y), a0); a0 = fma(ya[0][2][p], half2(p01.x), a0); a0 = fma(ya[0][3][p], half2(p01.y), a0); a0 = fma(ya[0][4][p], half2(p02.x), a0);
+                half2 a1 = ya[1][0][p] * half2(p10.x); a1 = fma(ya[1][1][p], half2(p10.y), a1); a1 = fma(ya[1][2][p], half2(p11.x), a1); a1 = fma(ya[1][3][p], half2(p11.y), a1); a1 = fma(ya[1][4][p], half2(p12.x), a1);
+                half2 a2 = yb[0][p] * half2(p20.x); a2 = fma(yb[1][p], half2(p20.y), a2); a2 = fma(yb[2][p], half2(p21.x), a2); a2 = fma(yb[3][p], half2(p21.y), a2); a2 = fma(yb[4][p], half2(p22.x), a2);
+                const half2 aq = yq[p] * half2(tq);
+                acc[r][p] += d * (float2(a0) + float2(a1) + float2(a2) + float2(aq));
+            }
+        }
+    }
+    for (int r = 0; r < NR; r++) for (int p = 0; p < NP; p++) { float v0 = simd_sum(acc[r][p].x), v1 = simd_sum(acc[r][p].y); if (lane == 0 && row0 + uint(r) < N) { y[ulong(2 * p) * N + row0 + uint(r)] = v0; y[ulong(2 * p + 1) * N + row0 + uint(r)] = v1; } }
+}
+#define INSTP(NR, NSG, NP) template [[host_name("k_gemv_lutp" #NP "_nr" #NR "_sg" #NSG)]] kernel void k_gemv_lutp<NR, NSG, NP>(device const uchar*, device const half2*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
+INSTP(4, 4, 1) INSTP(4, 4, 2) INSTP(2, 4, 2) INSTP(4, 4, 4) INSTP(2, 4, 4) INSTP(1, 4, 4) INSTP(2, 4, 3) INSTP(2, 4, 8) INSTP(1, 4, 8)
+
+// ---- wide verification on the matrix unit: each threadgroup owns 64 output rows; per 128-weight K block the packed weights are decoded ONCE into a fp16 tile in threadgroup memory
+// ([n][k], scale applied, exact) and multiplied with up to 16 token vectors by matmul2d. Tokens beyond the real count just compute garbage rows.
+#include <metal_tensor>
+#include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
+using namespace mpp::tensor_ops;
+kernel void k_wide_gemm(device const uchar* W [[buffer(0)]], device half* x [[buffer(1)]], device float* y [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& N [[buffer(4)]],
+                        uint tgid [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
+    threadgroup uint4 lutv[256]; threadgroup half Bt[64 * 128];
+    for (uint b = tid; b < 256u; b += 128u) {
+        uint p3[6] = {1u, 3u, 9u, 27u, 81u, 243u}; half t[8];
+        for (uint n = 0; n < 5; n++) t[n] = half(float(int((b * p3[n + 1]) >> 8) - 3 * int((b * p3[n]) >> 8) - 1)); t[5] = 0.0h; t[6] = 0.0h; t[7] = 0.0h;
+        lutv[b] = uint4(as_type<uint>(half2(t[0], t[1])), as_type<uint>(half2(t[2], t[3])), as_type<uint>(half2(t[4], t[5])), as_type<uint>(half2(t[6], t[7])));
+    }
+    threadgroup const half* lutH = (threadgroup const half*)lutv;
+    const uint nblk = K / 128u, n0 = tgid * 64u, r = tid >> 1, hh = tid & 1u;
+    constexpr auto desc = matmul2d_descriptor(16, 64, 128, false, true, false, matmul2d_descriptor::mode::multiply_accumulate);
+    matmul2d<desc, execution_simdgroups<4>> op;
+    array<int, 2> sA = {1, int(K)}, sB = {1, 128};
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tA0(x, dextents<int32_t, 2>(128, 16), sA);
+    tensor<threadgroup half, dextents<int32_t, 2>, tensor_inline> tB(&Bt[0], dextents<int32_t, 2>(128, 64), sB);
+    auto cC = op.get_destination_cooperative_tensor<decltype(tA0), decltype(tB), float>();
+    for (uint i = 0; i < cC.get_capacity(); i++) cC[i] = 0.0f;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    threadgroup half* row = Bt + r * 128u;
+    for (uint kb = 0; kb < nblk; kb++) {
+        device const uchar* bp = W + (ulong(min(n0 + r, N - 1u)) * ulong(nblk) + kb) * 28ul;
+        const half d = as_type<half>(*(device const ushort*)(bp + 26));
+        if (hh == 0) {   // elements 0..63: digits 0..3 of the 16 bytes qs[0..15]
+            for (uint mq = 0; mq < 4; mq++) {
+                const uint w = *(device const uint*)(bp + 4 * mq);
+                const uint4 e0 = lutv[w & 0xffu], e1 = lutv[(w >> 8) & 0xffu], e2 = lutv[(w >> 16) & 0xffu], e3 = lutv[w >> 24];
+                const half2 a0 = as_type<half2>(e0.x), a1 = as_type<half2>(e1.x), a2 = as_type<half2>(e2.x), a3 = as_type<half2>(e3.x);
+                const half2 b0 = as_type<half2>(e0.y), b1 = as_type<half2>(e1.y), b2 = as_type<half2>(e2.y), b3 = as_type<half2>(e3.y);
+                *(threadgroup half4*)(row + 0 * 16 + 4 * mq) = half4(a0.x, a1.x, a2.x, a3.x) * d;
+                *(threadgroup half4*)(row + 1 * 16 + 4 * mq) = half4(a0.y, a1.y, a2.y, a3.y) * d;
+                *(threadgroup half4*)(row + 2 * 16 + 4 * mq) = half4(b0.x, b1.x, b2.x, b3.x) * d;
+                *(threadgroup half4*)(row + 3 * 16 + 4 * mq) = half4(b0.y, b1.y, b2.y, b3.y) * d;
+            }
+        } else {         // elements 64..79 (digit 4 of qs[0..15]), 80..119 (qs[16..23], 5 digits), 120..127 (qh)
+            for (uint mq = 0; mq < 4; mq++) {
+                const uint w = *(device const uint*)(bp + 4 * mq);
+                *(threadgroup half4*)(row + 64 + 4 * mq) = half4(lutH[(w & 0xffu) * 8 + 4], lutH[((w >> 8) & 0xffu) * 8 + 4], lutH[((w >> 16) & 0xffu) * 8 + 4], lutH[(w >> 24) * 8 + 4]) * d;
+            }
+            for (uint mq = 0; mq < 2; mq++) {
+                const uint w = *(device const uint*)(bp + 16 + 4 * mq);
+                const uint4 e0 = lutv[w & 0xffu], e1 = lutv[(w >> 8) & 0xffu], e2 = lutv[(w >> 16) & 0xffu], e3 = lutv[w >> 24];
+                const half2 a0 = as_type<half2>(e0.x), a1 = as_type<half2>(e1.x), a2 = as_type<half2>(e2.x), a3 = as_type<half2>(e3.x);
+                const half2 b0 = as_type<half2>(e0.y), b1 = as_type<half2>(e1.y), b2 = as_type<half2>(e2.y), b3 = as_type<half2>(e3.y);
+                const half2 c0 = as_type<half2>(e0.z), c1 = as_type<half2>(e1.z), c2 = as_type<half2>(e2.z), c3 = as_type<half2>(e3.z);
+                *(threadgroup half4*)(row + 80 + 0 * 8 + 4 * mq) = half4(a0.x, a1.x, a2.x, a3.x) * d;
+                *(threadgroup half4*)(row + 80 + 1 * 8 + 4 * mq) = half4(a0.y, a1.y, a2.y, a3.y) * d;
+                *(threadgroup half4*)(row + 80 + 2 * 8 + 4 * mq) = half4(b0.x, b1.x, b2.x, b3.x) * d;
+                *(threadgroup half4*)(row + 80 + 3 * 8 + 4 * mq) = half4(b0.y, b1.y, b2.y, b3.y) * d;
+                *(threadgroup half4*)(row + 80 + 4 * 8 + 4 * mq) = half4(c0.x, c1.x, c2.x, c3.x) * d;
+            }
+            const ushort qh = *(device const ushort*)(bp + 24); const uint q0 = qh & 0xffu, q1 = qh >> 8;
+            for (uint n = 0; n < 4; n++) *(threadgroup half2*)(row + 120 + 2 * n) = half2(lutH[q0 * 8 + n], lutH[q1 * 8 + n]) * half2(d);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        tensor<device half, dextents<int32_t, 2>, tensor_inline> tA(x + kb * 128u, dextents<int32_t, 2>(128, 16), sA);
+        op.run(tA, tB, cC);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint i = 0; i < cC.get_capacity(); i++) if (cC.is_valid_element(i)) { auto ix = cC.get_multidimensional_index(i); const uint col = n0 + uint(ix[0]); if (col < N) y[ulong(ix[1]) * N + col] = cC[i]; }
+}

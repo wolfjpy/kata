@@ -61,3 +61,6 @@ $(BUILD)/layout_probe: tools/layout_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 
 $(BUILD)/kv_read_probe: tools/kv_read_probe.cpp src/gpu.cpp src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/kv_read_probe.cpp src/gpu.cpp $(LDFLAGS) -o $@
+
+$(BUILD)/weight_read_probe: tools/weight_read_probe.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/weight_read_probe.cpp src/gguf.cpp src/gpu.cpp $(LDFLAGS) -o $@

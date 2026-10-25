@@ -19,10 +19,10 @@ int main(int argc, char** argv) {
     for (auto& sh : shapes) {
         std::vector<uint64_t> offs; for (int l = 0; l < 8; l++) { char nm[128]; snprintf(nm, sizeof nm, sh.tensor, l * 4 + (std::string(sh.tensor).find("qkv") != std::string::npos ? 0 : 0)); offs.push_back(gg.tensor(nm).fileOffset); }
         const double bytesOne = (double)sh.N * (sh.K / 128) * 28;
-        MTL::Buffer* x = gpu.alloc(2 * sh.K * 2); _Float16* xp = (_Float16*)x->contents(); srand(1); for (uint32_t i = 0; i < 2 * sh.K; i++) xp[i] = (_Float16)((float)(rand() % 2001 - 1000) / 1000.0f);
-        MTL::Buffer* xi = gpu.alloc(2 * sh.K * 2); { _Float16* q = (_Float16*)xi->contents(); for (uint32_t i = 0; i < sh.K; i++) { q[2 * i] = xp[i]; q[2 * i + 1] = xp[sh.K + i]; } }
+        MTL::Buffer* x = gpu.alloc(16 * sh.K * 2); _Float16* xp = (_Float16*)x->contents(); srand(1); for (uint32_t i = 0; i < 16 * sh.K; i++) xp[i] = (_Float16)((float)(rand() % 2001 - 1000) / 1000.0f);
+        MTL::Buffer* xi = gpu.alloc(16 * sh.K * 2); MTL::Buffer* xi2 = nullptr; (void)xi2; auto fillIl = [&](uint32_t NP) { _Float16* q = (_Float16*)xi->contents(); for (uint32_t i = 0; i < sh.K; i++) for (uint32_t p = 0; p < NP; p++) { q[(i * NP + p) * 2] = xp[(2 * p) * sh.K + i]; q[(i * NP + p) * 2 + 1] = xp[(2 * p + 1) * sh.K + i]; } };
         MTL::Buffer* xf = gpu.alloc(sh.K * 4); float* xfp = (float*)xf->contents();
-        MTL::Buffer* y = gpu.alloc(2 * sh.N * 4); MTL::Buffer* yr = gpu.alloc(sh.N * 4);
+        MTL::Buffer* y = gpu.alloc(16 * sh.N * 4); MTL::Buffer* yr = gpu.alloc(sh.N * 4);
         printf("== %s (%.1f MB per matrix)\n", sh.label, bytesOne / 1e6);
         auto run = [&](const std::string& k, int reps, uint32_t nr, uint32_t nsg, MTL::Buffer* xx, MTL::Buffer* yy) {
             MTL::ComputePipelineState* p = gpu.pipe(k.c_str()); MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
@@ -30,12 +30,12 @@ int main(int argc, char** argv) {
                 e->dispatchThreadgroups(MTL::Size((sh.N + nr * nsg - 1) / (nr * nsg), 1, 1), MTL::Size(32 * nsg, 1, 1)); }
             e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); return cb->GPUEndTime() - cb->GPUStartTime(); };
         for (auto& k : kernels) {
-            uint32_t nr = 4, nsg = 4, T = 2; { size_t a = k.find("_nr"), b = k.find("_sg"), t = k.find("_t"); if (a != std::string::npos) { nr = atoi(k.c_str() + a + 3); nsg = atoi(k.c_str() + b + 3); } if (k.find("_t") != std::string::npos && k.find("lut") == std::string::npos) T = atoi(k.c_str() + t + 2); }
+            uint32_t nr = 4, nsg = 4, T = 2; { size_t a = k.find("_nr"), b = k.find("_sg"), t = k.find("_t"); if (a != std::string::npos) { nr = atoi(k.c_str() + a + 3); nsg = atoi(k.c_str() + b + 3); } if (k.find("_t") != std::string::npos && k.find("lut") == std::string::npos) T = atoi(k.c_str() + t + 2); if (k.find("wide") != std::string::npos) { T = 16; nr = 16; nsg = 4; } else if (k.find("lutp") != std::string::npos) { const uint32_t NP = atoi(k.c_str() + k.find("lutp") + 4); T = 2 * NP; fillIl(NP); } else if (k.find("lut2") != std::string::npos) { T = 2; fillIl(1); } }
             // correctness against the fp32 single-token kernel on matrix 0, each token
             double md = 0; for (uint32_t tk = 0; tk < T; tk++) {
                 for (uint32_t i = 0; i < sh.K; i++) xfp[i] = (float)xp[tk * sh.K + i];
                 { MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder(); e->setComputePipelineState(gpu.pipe("k_gemv_v1_nr4_sg4")); e->setBuffer(wbuf, offs[0], 0); e->setBuffer(xf, 0, 1); e->setBuffer(yr, 0, 2); e->setBytes(&sh.K, 4, 3); e->setBytes(&sh.N, 4, 4); e->dispatchThreadgroups(MTL::Size((sh.N + 15) / 16, 1, 1), MTL::Size(128, 1, 1)); e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); }
-                memset(y->contents(), 0, 2 * sh.N * 4);
+                memset(y->contents(), 0, (size_t)T * sh.N * 4);
                 { MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder(); e->setComputePipelineState(gpu.pipe(k.c_str())); e->setBuffer(wbuf, offs[0], 0); e->setBuffer(k.find("lut") != std::string::npos ? xi : x, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&sh.K, 4, 3); e->setBytes(&sh.N, 4, 4); e->dispatchThreadgroups(MTL::Size((sh.N + nr * nsg - 1) / (nr * nsg), 1, 1), MTL::Size(32 * nsg, 1, 1)); e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); }
                 const float* a = (const float*)y->contents() + (size_t)tk * sh.N; const float* b = (const float*)yr->contents(); for (uint32_t i = 0; i < sh.N; i++) md = std::max(md, (double)std::fabs(a[i] - b[i]));
             }
