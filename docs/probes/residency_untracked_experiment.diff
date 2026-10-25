@@ -1,0 +1,16 @@
+12d11
+<     if (getenv("BONSAI_RESIDENCY")) { MTL::ResidencySetDescriptor* d = MTL::ResidencySetDescriptor::alloc()->init(); NS::Error* e = nullptr; residency = dev->newResidencySet(d, &e); d->release(); queue->addResidencySet(residency); }
+28,29c27
+<     static const bool untracked = getenv("BONSAI_UNTRACKED") != nullptr; MTL::Buffer* b = dev->newBuffer(bytes, MTL::ResourceStorageModeShared | (untracked ? MTL::ResourceHazardTrackingModeUntracked : 0));
+<     if (residency) { addToResidency(b); }
+---
+>     MTL::Buffer* b = dev->newBuffer(bytes, MTL::ResourceStorageModeShared);
+34,35c32
+<     static const bool untracked = getenv("BONSAI_UNTRACKED") != nullptr; MTL::Buffer* b = dev->newBuffer(p, len, MTL::ResourceStorageModeShared | (untracked ? MTL::ResourceHazardTrackingModeUntracked : 0), nullptr);
+<     if (residency) { addToResidency(b); }
+---
+>     MTL::Buffer* b = dev->newBuffer(p, len, MTL::ResourceStorageModeShared, nullptr);
+39,41d35
+< 
+< void Gpu::addToResidency(MTL::Buffer* b) { residency->addAllocation(b); }
+< void Gpu::commitResidency() { if (!residency) return; residency->commit(); residency->requestResidency(); }
