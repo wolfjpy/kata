@@ -13,7 +13,7 @@
 using namespace bonsai;
 
 namespace {
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr uint64_t kAlign = 4096;
 struct Hdr {
     char magic[8]; uint32_t version, n; uint64_t modelFp; char tag[64];
@@ -25,9 +25,11 @@ constexpr size_t kHidBytes = 5120 * 4;
 
 uint64_t alignUp(uint64_t x) { return (x + kAlign - 1) / kAlign * kAlign; }
 struct Layout { uint64_t tokensOff, gdnOff, convOff, kvOff, mtpOff, hOff, logitsOff, total; };
-Layout layoutFor(uint32_t n, uint64_t gdnBytes, uint64_t convBytes, uint32_t nAttn, uint32_t kvRow, bool mtp) {
+constexpr uint32_t kMtpRow = kKvDim * 2;   // the MTP layer keeps an fp16 K/V cache in every mode
+// kvRowSum = bytes per position over all KV planes of one attention layer (fp16: K + V; int8: K + V + both scale planes)
+Layout layoutFor(uint32_t n, uint64_t gdnBytes, uint64_t convBytes, uint32_t nAttn, uint32_t kvRowSum, bool mtp) {
     Layout l{}; l.tokensOff = kAlign; l.gdnOff = alignUp(l.tokensOff + 4ull * n); l.convOff = alignUp(l.gdnOff + gdnBytes); l.kvOff = alignUp(l.convOff + convBytes);
-    l.mtpOff = alignUp(l.kvOff + (uint64_t)nAttn * 2 * n * kvRow); l.hOff = alignUp(l.mtpOff + (mtp ? 2ull * n * kvRow : 0)); l.logitsOff = alignUp(l.hOff + (mtp ? kHidBytes : 0));
+    l.mtpOff = alignUp(l.kvOff + (uint64_t)nAttn * n * kvRowSum); l.hOff = alignUp(l.mtpOff + (mtp ? 2ull * n * kMtpRow : 0)); l.logitsOff = alignUp(l.hOff + (mtp ? kHidBytes : 0));
     l.total = l.logitsOff + (uint64_t)kVocab * 4; return l;
 }
 // two independent FNV-1a streams over the token ids; prefix hashes for every length
@@ -86,15 +88,15 @@ uint32_t PrefixCache::restore(const std::vector<int32_t>& ids, int* lastTok) {
     std::sort(es.begin(), es.end(), [](const Found& a, const Found& b) { return a.h.n > b.h.n; });
     for (const Found& f : es) {
         const Hdr& h = f.h; const uint32_t n = h.n;
-        if (n == 0 || n > ids.size() || n > eng_.maxCtx || h.modelFp != fp_ || strncmp(h.tag, tag_.c_str(), sizeof h.tag) != 0 || h.nAttn != eng_.numAttn() || h.kvRow != kKvDim * 2 || h.gdnBytes != eng_.gdnBytes() || h.convBytes != eng_.convBytes()) continue;
+        if (n == 0 || n > ids.size() || n > eng_.maxCtx || h.modelFp != fp_ || strncmp(h.tag, tag_.c_str(), sizeof h.tag) != 0 || h.nAttn != eng_.numAttn() || h.kvRow != kvRowSum() || h.gdnBytes != eng_.gdnBytes() || h.convBytes != eng_.convBytes()) continue;
         if (wantMtp_ && !h.hasMtp) continue;
         if (h.hash0 != h0[n] || h.hash1 != h1[n]) continue;
         const Layout l = layoutFor(n, h.gdnBytes, h.convBytes, h.nAttn, h.kvRow, h.hasMtp != 0); if (f.bytes != l.total) continue;
         int fd = open(f.path.c_str(), O_RDONLY); if (fd < 0) continue;
         std::vector<int32_t> toks(n); bool ok = preadAll(fd, toks.data(), 4ull * n, l.tokensOff) && memcmp(toks.data(), ids.data(), 4ull * n) == 0;
         ok = ok && preadAll(fd, eng_.gdnPtr(), h.gdnBytes, l.gdnOff) && preadAll(fd, eng_.convPtr(), h.convBytes, l.convOff);
-        for (uint32_t a = 0; ok && a < h.nAttn; a++) ok = preadAll(fd, eng_.kvPtr(a, false), (uint64_t)n * h.kvRow, l.kvOff + (uint64_t)a * 2 * n * h.kvRow) && preadAll(fd, eng_.kvPtr(a, true), (uint64_t)n * h.kvRow, l.kvOff + ((uint64_t)a * 2 + 1) * n * h.kvRow);
-        if (ok && wantMtp_) ok = preadAll(fd, eng_.mtpKvPtr(false), (uint64_t)n * h.kvRow, l.mtpOff) && preadAll(fd, eng_.mtpKvPtr(true), (uint64_t)n * h.kvRow, l.mtpOff + (uint64_t)n * h.kvRow) && preadAll(fd, eng_.hPrevPtr(), kHidBytes, l.hOff);
+        for (uint32_t a = 0; ok && a < h.nAttn; a++) { uint64_t pre = 0; for (uint32_t pl = 0; ok && pl < eng_.kvPlanes(); pl++) { const uint64_t rb = eng_.kvPlaneRow(pl); ok = preadAll(fd, eng_.kvPlanePtr(a, pl), (uint64_t)n * rb, l.kvOff + (uint64_t)n * ((uint64_t)a * h.kvRow + pre)); pre += rb; } }
+        if (ok && wantMtp_) ok = preadAll(fd, eng_.mtpKvPtr(false), (uint64_t)n * kMtpRow, l.mtpOff) && preadAll(fd, eng_.mtpKvPtr(true), (uint64_t)n * kMtpRow, l.mtpOff + (uint64_t)n * kMtpRow) && preadAll(fd, eng_.hPrevPtr(), kHidBytes, l.hOff);
         if (ok && n == ids.size()) { ok = preadAll(fd, eng_.logitsMut(), (uint64_t)kVocab * 4, l.logitsOff); if (ok && lastTok) *lastTok = h.lastTok; }
         close(fd);
         if (!ok) { fprintf(stderr, "[cache] %s is unreadable, ignoring it\n", f.path.c_str()); eng_.resetState(); continue; }
@@ -109,7 +111,7 @@ void PrefixCache::save(const int32_t* ids, uint32_t n) {
     std::vector<uint64_t> h0, h1; prefixHashes(ids, n, h0, h1);
     uint64_t th = fp_; for (char c : tag_) th = (th ^ (uint8_t)c) * 1099511628211ull;                       // the file name carries the numerics tag and the model, so paths of different modes never collide
     const std::string path = cfg_.dir + "/" + hex64(h0[n]) + "-" + hex64(th).substr(0, 8) + "-" + std::to_string(n) + ".ckpt";
-    const Layout want = layoutFor(n, eng_.gdnBytes(), eng_.convBytes(), eng_.numAttn(), kKvDim * 2, wantMtp_);
+    const Layout want = layoutFor(n, eng_.gdnBytes(), eng_.convBytes(), eng_.numAttn(), kvRowSum(), wantMtp_);
     struct stat st; if (stat(path.c_str(), &st) == 0) {
         if ((uint64_t)st.st_size == want.total) { struct timeval tv[2]; gettimeofday(&tv[0], nullptr); tv[1] = tv[0]; utimes(path.c_str(), tv); return; }   // already there and complete: just refresh its age
         unlink(path.c_str());                                                                                       // truncated or from an older layout: rewrite it
@@ -123,14 +125,14 @@ void PrefixCache::save(const int32_t* ids, uint32_t n) {
 }
 
 void PrefixCache::writeFile(std::string path, std::string tmp, std::vector<int32_t> toks, uint32_t n, std::vector<uint8_t> gdn, std::vector<uint8_t> conv, std::vector<uint8_t> hprev, std::vector<float> logits, int lastTok, bool mtp) {
-    const uint32_t nAttn = eng_.numAttn(), kvRow = kKvDim * 2; const Layout l = layoutFor(n, gdn.size(), conv.size(), nAttn, kvRow, mtp);
+    const uint32_t nAttn = eng_.numAttn(), kvRow = kvRowSum(); const Layout l = layoutFor(n, gdn.size(), conv.size(), nAttn, kvRow, mtp);
     std::vector<uint64_t> h0, h1; prefixHashes(toks.data(), n, h0, h1);
     Hdr h{}; memcpy(h.magic, "BNSCKPT1", 8); h.version = kVersion; h.n = n; h.modelFp = fp_; strncpy(h.tag, tag_.c_str(), sizeof h.tag - 1); h.hasMtp = mtp ? 1 : 0; h.nAttn = nAttn; h.kvRow = kvRow;
     h.gdnBytes = gdn.size(); h.convBytes = conv.size(); h.hash0 = h0[n]; h.hash1 = h1[n]; h.lastTok = lastTok; h.tokensOff = l.tokensOff; h.gdnOff = l.gdnOff; h.convOff = l.convOff; h.kvOff = l.kvOff; h.mtpOff = l.mtpOff; h.hOff = l.hOff; h.logitsOff = l.logitsOff; h.total = l.total;
     int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644); if (fd < 0) { fprintf(stderr, "[cache] cannot write %s\n", tmp.c_str()); return; }
     bool ok = ftruncate(fd, (off_t)l.total) == 0 && pwriteAll(fd, &h, sizeof h, 0) && pwriteAll(fd, toks.data(), 4ull * n, l.tokensOff) && pwriteAll(fd, gdn.data(), gdn.size(), l.gdnOff) && pwriteAll(fd, conv.data(), conv.size(), l.convOff);
-    for (uint32_t a = 0; ok && a < nAttn; a++) ok = pwriteAll(fd, eng_.kvPtr(a, false), (uint64_t)n * kvRow, l.kvOff + (uint64_t)a * 2 * n * kvRow) && pwriteAll(fd, eng_.kvPtr(a, true), (uint64_t)n * kvRow, l.kvOff + ((uint64_t)a * 2 + 1) * n * kvRow);
-    if (ok && mtp) ok = pwriteAll(fd, eng_.mtpKvPtr(false), (uint64_t)n * kvRow, l.mtpOff) && pwriteAll(fd, eng_.mtpKvPtr(true), (uint64_t)n * kvRow, l.mtpOff + (uint64_t)n * kvRow) && pwriteAll(fd, hprev.data(), hprev.size(), l.hOff);
+    for (uint32_t a = 0; ok && a < nAttn; a++) { uint64_t pre = 0; for (uint32_t pl = 0; ok && pl < eng_.kvPlanes(); pl++) { const uint64_t rb = eng_.kvPlaneRow(pl); ok = pwriteAll(fd, eng_.kvPlanePtr(a, pl), (uint64_t)n * rb, l.kvOff + (uint64_t)n * ((uint64_t)a * kvRow + pre)); pre += rb; } }
+    if (ok && mtp) ok = pwriteAll(fd, eng_.mtpKvPtr(false), (uint64_t)n * kMtpRow, l.mtpOff) && pwriteAll(fd, eng_.mtpKvPtr(true), (uint64_t)n * kMtpRow, l.mtpOff + (uint64_t)n * kMtpRow) && pwriteAll(fd, hprev.data(), hprev.size(), l.hOff);
     if (ok) ok = pwriteAll(fd, logits.data(), (uint64_t)kVocab * 4, l.logitsOff);
     close(fd);
     if (!ok || rename(tmp.c_str(), path.c_str()) != 0) { fprintf(stderr, "[cache] writing %s failed\n", path.c_str()); unlink(tmp.c_str()); return; }

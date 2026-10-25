@@ -34,6 +34,7 @@ public:
     const CacheConfig& config() const { return cfg_; }
     uint64_t savedBytes = 0; uint32_t savedCount = 0, hits = 0; double restoreSec = 0;
 private:
+    uint32_t kvRowSum() const { uint32_t r = 0; for (uint32_t p = 0; p < eng_.kvPlanes(); p++) r += (uint32_t)eng_.kvPlaneRow(p); return r; }
     Engine& eng_; CacheConfig cfg_; bool wantMtp_; uint64_t fp_; std::string tag_;
     std::thread writer_;
     void writeFile(std::string path, std::string tmp, std::vector<int32_t> toks, uint32_t n, std::vector<uint8_t> gdn, std::vector<uint8_t> conv, std::vector<uint8_t> hprev, std::vector<float> logits, int lastTok, bool mtp);

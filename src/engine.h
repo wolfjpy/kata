@@ -60,7 +60,13 @@ public:
     size_t gdnBytes() const { return gdnState->length(); }
     uint8_t* convPtr() const { return (uint8_t*)convState->contents(); }
     size_t convBytes() const { return convState->length(); }
-    uint8_t* kvPtr(uint32_t attnLayer, bool value) const { return (uint8_t*)(value ? vcache : kcache)->contents() + (size_t)attnLayer * maxCtx * bonsai::kKvDim * 2; }
+    // KV planes of the main attention layers: fp16 -> {K, V}; int8 -> {K, V, K scales, V scales} (one fp16 scale per position and KV head)
+    bool kvInt8 = false;     // --kv int8 / BONSAI_KV=int8 (lossy; set before load)
+    uint32_t kvPlanes() const { return kvInt8 ? 4u : 2u; }
+    size_t kvPlaneRow(uint32_t plane) const { return plane < 2 ? (size_t)bonsai::kKvDim * (kvInt8 ? 1 : 2) : (size_t)4 * 2; }
+    uint8_t* kvPlanePtr(uint32_t attnLayer, uint32_t plane) const {
+        MTL::Buffer* b = plane == 0 ? kcache : plane == 1 ? vcache : plane == 2 ? kscale : vscale; return (uint8_t*)b->contents() + (size_t)attnLayer * maxCtx * kvPlaneRow(plane); }
+    // (the single MTP layer keeps an fp16 cache in every mode)
     uint8_t* mtpKvPtr(bool value) const { return (uint8_t*)(value ? mV : mK)->contents(); }
     uint8_t* hPrevPtr() const { return (uint8_t*)hPrevBuf->contents(); }
     float* logitsMut() const { return (float*)bufLogits->contents(); }
@@ -87,7 +93,11 @@ private:
     MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
-    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos);
+    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0);
+    MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
+    uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * bonsai::kKvDim * (kvInt8 ? 1u : 2u); }
+    uint64_t scLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * 4 * 2; }
+    void dKvQuant(MTL::ComputeCommandEncoder* e, uint32_t T, uint32_t pos0, uint32_t ai);
     void loadMtp();
     void dGemm(MTL::ComputeCommandEncoder* e, MTL::Buffer* A, MTL::Buffer* B, uint64_t bOff, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N);
     void dExpandGemm(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* A, MTL::Buffer* C, uint32_t Mpad, uint32_t K, uint32_t N, const char* name);

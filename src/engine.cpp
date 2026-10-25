@@ -47,7 +47,9 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
     bufQfull = gpu.alloc(kQProjOut * 4); bufK = gpu.alloc(kKvDim * 4); bufV = gpu.alloc(kKvDim * 4); bufQ = gpu.alloc(kAttnOutIn * 4); bufGate = gpu.alloc(kAttnOutIn * 4); bufAttnO = gpu.alloc(kAttnOutIn * 4);
     bufG = gpu.alloc(17408 * 4); bufU = gpu.alloc(17408 * 4); bufLogits = gpu.alloc((size_t)kVocab * 4); bufTok = gpu.alloc(16); bufArg = gpu.alloc(16);
     gdnState = gpu.alloc((size_t)nGdn * kGdnVHeads * 128 * 128 * 4); convState = gpu.alloc((size_t)nGdn * 3 * kGdnQkvDim * 4);
-    kcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * 2); vcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * 2);
+    if (const char* kv = getenv("BONSAI_KV")) kvInt8 = std::string(kv) == "int8";
+    kcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * (kvInt8 ? 1 : 2)); vcache = gpu.alloc((size_t)nAttn * maxCtx * kKvDim * (kvInt8 ? 1 : 2));
+    if (kvInt8) { kscale = gpu.alloc((size_t)nAttn * maxCtx * 4 * 2); vscale = gpu.alloc((size_t)nAttn * maxCtx * 4 * 2); kvScrK = gpu.alloc((size_t)kMaxChunk * kKvDim * 2); kvScrV = gpu.alloc((size_t)kMaxChunk * kKvDim * 2); }
     {   // alpha|beta (bf16 [48][5120] each) -> one fp16 tile-major matrix with 128 output columns (alpha 0..47, beta 48..95, zero pad) per GDN layer
         wabAll = gpu.alloc((size_t)nGdn * 2 * 5120 * 64 * 2); _Float16* dst = (_Float16*)wabAll->contents();
         for (uint32_t il = 0; il < kLayers; il++) { const LayerW& L = layers[il]; if (L.isAttn) continue;
@@ -73,6 +75,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
 void Engine::resetState() {
     memset(gdnState->contents(), 0, gdnState->length()); memset(convState->contents(), 0, convState->length());
     memset(kcache->contents(), 0, kcache->length()); memset(vcache->contents(), 0, vcache->length());
+    if (kvInt8) { memset(kscale->contents(), 0, kscale->length()); memset(vscale->contents(), 0, vscale->length()); }
 }
 
 void Engine::dGemvPtq1(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N, const char* label) {
@@ -97,11 +100,11 @@ void Engine::dCopy(MTL::ComputeCommandEncoder* e, MTL::Buffer* src, MTL::Buffer*
 }
 
 // Flash-decoding attention on the matrix unit for T (1 or 2) query tokens at positions posBase.. (keys [firstPos, posBase+T) of one layer's cache). Output includes the sigmoid gate.
-void Engine::dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos) {
+void Engine::dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc, MTL::Buffer* vsc, uint64_t scOff) {
     static const uint32_t chunk = getenv("BONSAI_DEC_CHUNK") ? (uint32_t)atoi(getenv("BONSAI_DEC_CHUNK")) : 128u;
     const uint32_t nSplits = (posBase + T - firstPos + chunk - 1) / chunk; uint32_t prm[4] = {posBase, T, firstPos, chunk};
     e->setComputePipelineState(gpu.pipe("k_dec_q_pack")); e->setBuffer(q, 0, 0); e->setBuffer(decQp, 0, 1); e->setBytes(&T, 4, 2); e->dispatchThreads(MTL::Size(4 * 16 * 256, 1, 1), MTL::Size(256, 1, 1));
-    e->setComputePipelineState(gpu.pipe("k_attn_dec_split")); e->setBuffer(decQp, 0, 0); e->setBuffer(kc, kvOff, 1); e->setBuffer(vc, kvOff, 2); e->setBuffer(decAcc, 0, 3); e->setBuffer(decM, 0, 4); e->setBuffer(decL, 0, 5); e->setBytes(prm, 16, 6);
+    e->setComputePipelineState(gpu.pipe(ksc ? "k_attn_dec_split_q8" : "k_attn_dec_split")); e->setBuffer(decQp, 0, 0); e->setBuffer(kc, kvOff, 1); e->setBuffer(vc, kvOff, 2); e->setBuffer(decAcc, 0, 3); e->setBuffer(decM, 0, 4); e->setBuffer(decL, 0, 5); e->setBytes(prm, 16, 6); e->setBuffer(ksc ? ksc : decQp, ksc ? scOff : 0, 7); e->setBuffer(vsc ? vsc : decQp, vsc ? scOff : 0, 8);
     e->dispatchThreadgroups(MTL::Size(nSplits, kKvHeads, 1), MTL::Size(32, 1, 1));
     e->setComputePipelineState(gpu.pipe("k_attn_dec_combine")); e->setBuffer(decAcc, 0, 0); e->setBuffer(decM, 0, 1); e->setBuffer(decL, 0, 2); e->setBuffer(gate, 0, 3); e->setBuffer(out, 0, 4); e->setBytes(prm, 16, 5);
     e->dispatchThreadgroups(MTL::Size(kHeads, T, 1), MTL::Size(256, 1, 1));
@@ -140,15 +143,15 @@ int Engine::step(int token, uint32_t pos, int dbgSlot, bool wantLogits) {
             dRmsFwht(e, bufGdnOut, nullptr, sg6144, 0, bufXp, 6144, 2);
             dGemvPtq1(e, L.ssmOut, bufXp, bufTmp, 6144, H, "gemv_ssmout");
         } else {
-            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = (uint64_t)ai * maxCtx * kKvDim * 2;
+            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = kvLayerOff(ai);
             dGemvPtq1(e, L.wq, bufXp, bufQfull, H, kQProjOut, "gemv_wq");
             dGemvPtq1(e, L.wk, bufXp, bufK, H, kKvDim, "gemv_wk");
             dGemvPtq1(e, L.wv, bufXp, bufV, H, kKvDim, "gemv_wv");
             if (!sk("k_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep")); e->setBuffer(bufQfull, 0, 0); e->setBuffer(bufK, 0, 1); e->setBuffer(bufV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
-              e->setBuffer(bufQ, 0, 5); e->setBuffer(bufGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos, 4, 9);
-              e->dispatchThreadgroups(MTL::Size(32, 1, 1), MTL::Size(256, 1, 1)); }
-            static const bool scalarDec = getenv("BONSAI_SCALAR_DEC") != nullptr;
-            if (!sk("k_attn_split") && !scalarDec) dDecAttn(e, bufQ, kcache, kvOff, vcache, bufGate, bufAttnO, pos, 1, 0);
+              e->setBuffer(bufQ, 0, 5); e->setBuffer(bufGate, 0, 6); e->setBuffer(kvInt8 ? kvScrK : kcache, kvInt8 ? 0 : kvOff, 7); e->setBuffer(kvInt8 ? kvScrV : vcache, kvInt8 ? 0 : kvOff, 8); e->setBytes(&pos, 4, 9); { uint32_t cOff = kvInt8 ? pos : 0; e->setBytes(&cOff, 4, 10); }
+              e->dispatchThreadgroups(MTL::Size(32, 1, 1), MTL::Size(256, 1, 1)); if (kvInt8) dKvQuant(e, 1, pos, ai); }
+            static const bool scalarDec = getenv("BONSAI_SCALAR_DEC") != nullptr && !kvInt8;
+            if (!sk("k_attn_split") && !scalarDec) dDecAttn(e, bufQ, kcache, kvOff, vcache, bufGate, bufAttnO, pos, 1, 0, kvInt8 ? kscale : nullptr, kvInt8 ? vscale : nullptr, scLayerOff(ai));
             else if (!sk("k_attn_split")) { uint32_t npos = pos + 1, S = std::min<uint32_t>(32, std::max<uint32_t>(1, npos / 64));
               e->setComputePipelineState(gpu.pipe("k_attn_split")); e->setBuffer(bufQ, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(bufPM, 0, 3); e->setBuffer(bufPL, 0, 4); e->setBuffer(bufPA, 0, 5); e->setBytes(&npos, 4, 6);
               e->dispatchThreadgroups(MTL::Size(S, kKvHeads, 1), MTL::Size(256, 1, 1));
@@ -245,17 +248,17 @@ int Engine::prefill(const int* toks, uint32_t M, uint32_t pos0, int dbgBase, boo
             fwhtB(pGdnOut, nullptr, sg6144, 6144, 2);
             dExpandGemm(e, L.ssmOut, pXp, pTmp, Mpad, 6144, H, "ssmout");
         } else {
-            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = (uint64_t)ai * maxCtx * kKvDim * 2;
+            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = kvLayerOff(ai);
             dExpandGemm(e, L.wq, pXp, pQfull, Mpad, H, kQProjOut, "wq");
             dExpandGemm(e, L.wk, pXp, pK, Mpad, H, kKvDim, "wk");
             dExpandGemm(e, L.wv, pXp, pV, Mpad, H, kKvDim, "wv");
             if (!sk("p_attn_prep")) { e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
-              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos0, 4, 9); { uint32_t h00 = 0; e->setBytes(&h00, 4, 10); }
-              e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
-            static const bool scalarAttn = getenv("BONSAI_SCALAR_ATTN") != nullptr;
+              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kvInt8 ? kvScrK : kcache, kvInt8 ? 0 : kvOff, 7); e->setBuffer(kvInt8 ? kvScrV : vcache, kvInt8 ? 0 : kvOff, 8); e->setBytes(&pos0, 4, 9); { uint32_t h00 = 0; e->setBytes(&h00, 4, 10); uint32_t cOff = kvInt8 ? pos0 : 0; e->setBytes(&cOff, 4, 11); }
+              e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); if (kvInt8) dKvQuant(e, M, pos0, ai); }
+            static const bool scalarAttn = getenv("BONSAI_SCALAR_ATTN") != nullptr && !kvInt8;
             if (!sk("p_attn") && !scalarAttn) {   // matrix-unit flash attention: the whole chunk in one dispatch
                 uint32_t n = M * 6144; e->setComputePipelineState(gpu.pipe("k_cvt_q_half")); e->setBuffer(pQ, 0, 0); e->setBuffer(pQh, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1));
-                e->setComputePipelineState(gpu.pipe("k_flash_prefill")); e->setBuffer(pQh, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pGate, 0, 3); e->setBuffer(pAttnO, 0, 4); e->setBytes(&pos0, 4, 5); e->setBytes(&M, 4, 6);
+                e->setComputePipelineState(gpu.pipe(kvInt8 ? "k_flash_prefill_q8" : "k_flash_prefill")); e->setBuffer(pQh, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pGate, 0, 3); e->setBuffer(pAttnO, 0, 4); e->setBytes(&pos0, 4, 5); e->setBytes(&M, 4, 6); e->setBuffer(kvInt8 ? kscale : pQh, kvInt8 ? scLayerOff(ai) : 0, 7); e->setBuffer(kvInt8 ? vscale : pQh, kvInt8 ? scLayerOff(ai) : 0, 8);
                 e->dispatchThreadgroups(MTL::Size((M + 15) / 16, kKvHeads, 1), MTL::Size(192, 1, 1));
             } else if (!sk("p_attn")) for (uint32_t base = 0; base < M; base += 256) {
                 const uint32_t mt = std::min<uint32_t>(256, M - base), posBase = pos0 + base, S = 8;
@@ -336,7 +339,7 @@ int Engine::mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0
     rows(mX, mtp.attnNorm, mH);
     gq(mtp.wq, mH, mQfull, H, kQProjOut); gq(mtp.wk, mH, mKp, H, kKvDim); gq(mtp.wv, mH, mVp, H, kKvDim);
     { uint32_t h00 = 0; e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(mQfull, 0, 0); e->setBuffer(mKp, 0, 1); e->setBuffer(mVp, 0, 2); e->setBuffer(wbuf, mtp.qNorm, 3); e->setBuffer(wbuf, mtp.kNorm, 4);
-      e->setBuffer(mQ, 0, 5); e->setBuffer(mGate, 0, 6); e->setBuffer(mK, 0, 7); e->setBuffer(mV, 0, 8); e->setBytes(&pos0, 4, 9); e->setBytes(&h00, 4, 10); e->dispatchThreadgroups(MTL::Size(32, R, 1), MTL::Size(256, 1, 1)); }
+      e->setBuffer(mQ, 0, 5); e->setBuffer(mGate, 0, 6); e->setBuffer(mK, 0, 7); e->setBuffer(mV, 0, 8); e->setBytes(&pos0, 4, 9); e->setBytes(&h00, 4, 10); { uint32_t c0 = 0; e->setBytes(&c0, 4, 11); } e->dispatchThreadgroups(MTL::Size(32, R, 1), MTL::Size(256, 1, 1)); }
     static const bool scalarDec = getenv("BONSAI_SCALAR_DEC") != nullptr;
     if (!scalarDec) dDecAttn(e, mQ, mK, 0, mV, mGate, mAttnO, pos0, R, 1);
     else { uint32_t S = std::min<uint32_t>(8, std::max<uint32_t>(1, (pos0 + R) / 64)), first = 1;
@@ -377,7 +380,7 @@ void Engine::encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t
     expand(mtp.wv, H, kKvDim); dGemm(e, pXp, pStage, 0, pV, Mpad, H, kKvDim);
     uint32_t p0 = pos0 + rowStart, h0 = 24;
     e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, mtp.qNorm, 3); e->setBuffer(wbuf, mtp.kNorm, 4);
-    e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(mK, 0, 7); e->setBuffer(mV, 0, 8); e->setBytes(&p0, 4, 9); e->setBytes(&h0, 4, 10); e->dispatchThreadgroups(MTL::Size(8, R, 1), MTL::Size(256, 1, 1));
+    e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(mK, 0, 7); e->setBuffer(mV, 0, 8); e->setBytes(&p0, 4, 9); e->setBytes(&h0, 4, 10); { uint32_t c0 = 0; e->setBytes(&c0, 4, 11); } e->dispatchThreadgroups(MTL::Size(8, R, 1), MTL::Size(256, 1, 1));
 }
 
 int Engine::feed(const int* toks, uint32_t n, uint32_t pos0, bool wantLogits) {
@@ -443,12 +446,12 @@ void Engine::verify2(const int* toks, uint32_t pos, int* argmaxOut) {
             fwhtB(pGdnOut, nullptr, sg6144, 6144, 2);
             gv(L.ssmOut, pXp, pTmp, 6144, H);
         } else {
-            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = (uint64_t)ai * maxCtx * kKvDim * 2;
+            const uint32_t ai = (uint32_t)L.stateIdx; const uint64_t kvOff = kvLayerOff(ai);
             gv(L.wq, pXp, pQfull, H, kQProjOut); gv(L.wk, pXp, pK, H, kKvDim); gv(L.wv, pXp, pV, H, kKvDim);
             { uint32_t h00 = 0; e->setComputePipelineState(gpu.pipe("k_attn_prep_b")); e->setBuffer(pQfull, 0, 0); e->setBuffer(pK, 0, 1); e->setBuffer(pV, 0, 2); e->setBuffer(wbuf, L.qNorm, 3); e->setBuffer(wbuf, L.kNorm, 4);
-              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kcache, kvOff, 7); e->setBuffer(vcache, kvOff, 8); e->setBytes(&pos, 4, 9); e->setBytes(&h00, 4, 10); e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); }
-            static const bool scalarDec = getenv("BONSAI_SCALAR_DEC") != nullptr;
-            if (!sk("v_attn") && !scalarDec) dDecAttn(e, pQ, kcache, kvOff, vcache, pGate, pAttnO, pos, 2, 0);
+              e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kvInt8 ? kvScrK : kcache, kvInt8 ? 0 : kvOff, 7); e->setBuffer(kvInt8 ? kvScrV : vcache, kvInt8 ? 0 : kvOff, 8); e->setBytes(&pos, 4, 9); e->setBytes(&h00, 4, 10); { uint32_t cOff = kvInt8 ? pos : 0; e->setBytes(&cOff, 4, 11); } e->dispatchThreadgroups(MTL::Size(32, M, 1), MTL::Size(256, 1, 1)); if (kvInt8) dKvQuant(e, M, pos, ai); }
+            static const bool scalarDec = getenv("BONSAI_SCALAR_DEC") != nullptr && !kvInt8;
+            if (!sk("v_attn") && !scalarDec) dDecAttn(e, pQ, kcache, kvOff, vcache, pGate, pAttnO, pos, 2, 0, kvInt8 ? kscale : nullptr, kvInt8 ? vscale : nullptr, scLayerOff(ai));
             else if (!sk("v_attn")) { uint32_t S = std::min<uint32_t>(32, std::max<uint32_t>(1, (pos + 2) / 64)), fp0 = 0;
               e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&pos, 4, 6); e->setBytes(&fp0, 4, 7);
               e->dispatchThreadgroups(MTL::Size(S, kKvHeads, M), MTL::Size(256, 1, 1));
@@ -493,5 +496,12 @@ uint64_t Engine::modelFingerprint() const {
 std::string Engine::numericsTag() const {
     std::string t = int8Mode ? "int8" : "fp16";
     if (int8Mode) if (const char* x = getenv("BONSAI_I8_EXCLUDE")) t += std::string(":excl=") + x;
+    if (kvInt8) t += "+kv8";
     return t;
+}
+
+// Quantises the K/V rows the prep kernels just wrote into the fp16 scratch (rows 0..T-1) into the int8 cache of attention layer ai at positions pos0..pos0+T-1.
+void Engine::dKvQuant(MTL::ComputeCommandEncoder* e, uint32_t T, uint32_t pos0, uint32_t ai) {
+    e->setComputePipelineState(gpu.pipe("k_kv_quant")); e->setBuffer(kvScrK, 0, 0); e->setBuffer(kvScrV, 0, 1); e->setBuffer(kcache, kvLayerOff(ai), 2); e->setBuffer(vcache, kvLayerOff(ai), 3);
+    e->setBuffer(kscale, scLayerOff(ai), 4); e->setBuffer(vscale, scLayerOff(ai), 5); e->setBytes(&pos0, 4, 6); e->dispatchThreadgroups(MTL::Size(8, T, 1), MTL::Size(256, 1, 1));
 }
