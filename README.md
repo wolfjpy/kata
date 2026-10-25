@@ -19,7 +19,8 @@ build/bonsai chat --model $M --system "You are concise."          # interactive;
 build/bonsai run  --model $M --prompt "..." --no-think --temp 0    # thinking off, greedy
 build/bonsai run  --model $M --raw --file prompt.txt               # pre-rendered prompt (special tokens parsed)
 build/bonsai run  --model $M --prompt "..." --no-spec              # plain decoding (MTP speculative decoding is on by default and exact)
-build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill path: ~10 percent faster, NOT within the quality gate (see docs/reports/M5b-prefill-optimization.md)
+build/bonsai run  --model $M --prompt "..." --fast-ffn             # int8 prefill for the FFN gate+up only: +7-9% prefill, passes the quality gate (KL 7.5e-5, top-1 99.87%; docs/reports/M13-fast-ffn.md)
+build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill for every matrix: +10%, does NOT pass the quality gate (docs/reports/M5b-prefill-optimization.md)
 build/bonsai run  --model $M --system "$(cat long_system_prompt.txt)" --prompt "..."   # the second run restores the system prompt from the disk cache
 build/bonsai run  --model $M --prompt "..." --kv int8             # int8 KV cache: half the KV memory, +14% decode / +10% prefill at 29K context (lossy: KL 1.3e-4, top-1 99.71%)
 build/bonsai cache [--clear]                                        # list / delete the persistent prefix cache (default ~/.cache/bonsai, 40 GB budget)
@@ -57,7 +58,8 @@ Measured on the Mac mini M6 (the GPU throttles under sustained load, so repeated
 | prefill, exact fp16, 512 tokens | **245 tok/s** | 208 tok/s (pp512) |
 | prefill, exact fp16, 1024-token chunk | **257 tok/s** | |
 | prefill, exact fp16, 7.3K-token prompt | **213 tok/s** | |
-| prefill, int8 (`--fast`, opt-in) | 269 to 283 tok/s | |
+| prefill, `--fast-ffn` (opt-in, lossy, within the gate) | 274 to 280 tok/s (1024 chunk), 226 tok/s (7.3K) | |
+| prefill, `--fast` (opt-in, outside the gate) | 281 tok/s | |
 
 Persistent prefix cache (M9): a prompt whose token prefix was seen before restores its complete state from `~/.cache/bonsai` instead of prefilling it. A 2.9K-token system prompt: 15 s of prefill becomes 0.1 s of restore plus the 21 new tokens; a repeated 3.6K-token prompt: 18.6 s becomes 0.03 s. Outputs are byte-identical to the uncached run. Options: `--no-cache`, `--cache-dir`, `--cache-gb`, `--cache-min` (see `docs/reports/M9-prefix-cache.md`; checkpoints contain the prompt's KV, so use `--no-cache` for sensitive prompts).
 
