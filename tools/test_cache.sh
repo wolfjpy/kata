@@ -15,6 +15,7 @@ R=$(run --temp 0 | h);                       check "restored run equals the unca
 S0=$(run --seed 11 --no-cache | h); S1=$(run --seed 11 | h); check "seeded sampling: restored equals uncached" "$S1" "$S0"
 K0=$(run --temp 0 --no-cache --kv int8 | h); K1=$(run --temp 0 --kv int8 | h); check "int8 KV: the writing run equals the uncached run" "$K1" "$K0"
 K2=$(run --temp 0 --kv int8 | h); check "int8 KV: the restored run equals the uncached run" "$K2" "$K0"; [ -n "$(restored)" ] || { echo "FAIL  nothing was restored for int8 KV"; fail=1; }
+FF0=$(run --temp 0 --no-cache --fast-ffn | h); FF1=$(run --temp 0 --fast-ffn | h); FF2=$(run --temp 0 --fast-ffn | h); check "--fast-ffn: writing and restored runs equal the uncached run" "$FF1/$FF2" "$FF0/$FF0"; [ -n "$(restored)" ] || { echo "FAIL  nothing was restored for --fast-ffn"; fail=1; }
 F=$(run --temp 0 --fast | h); check "int8 path does not use the fp16 checkpoint" "$(restored)" ""
 head -c 14000 docs/CHECKPOINT-001.md > "$D/raw.txt"; rm -rf "$BONSAI_CACHE_DIR"; P1=$($B run --model "$M" --raw --file "$D/raw.txt" --temp 0 --max-tokens 30 2>"$D/err" | h); P2=$($B run --model "$M" --raw --file "$D/raw.txt" --temp 0 --max-tokens 30 2>"$D/err" | h)
 check "whole-prompt hit equals the run that wrote the checkpoint" "$P2" "$P1"; [ -n "$(restored)" ] || { echo "FAIL  whole-prompt hit did not restore"; fail=1; }

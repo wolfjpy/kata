@@ -37,12 +37,12 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "mtp-eval") return cmdMtpEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
     if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
-    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false;
+    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false; std::string i8spec;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--verify") verifyN = atoi(argv[++i]);
         else if (a == "--ref-dir") refDir = argv[++i]; else if (a == "--ref-logits") refLogits = argv[++i]; else if (a == "--ctx") ctx = atoi(argv[++i]); else if (a == "--skip") skipArg = argv[++i];
-        else if (a == "--prefill") usePrefill = true; else if (a == "--repeat") repeat = atoi(argv[++i]); else if (a == "--int8") int8 = true; else if (a == "--nlogits") nlogits = atoi(argv[++i]);
+        else if (a == "--prefill") usePrefill = true; else if (a == "--repeat") repeat = atoi(argv[++i]); else if (a == "--int8") int8 = true; else if (a == "--i8") i8spec = argv[++i]; else if (a == "--nlogits") nlogits = atoi(argv[++i]);
         else if (a == "--dump-logits") dumpLogits = argv[++i]; else if (a == "--cmp-logits") cmpLogits = argv[++i];
     }
     if (model.empty() || ids.empty()) { fprintf(stderr, "usage: bonsai --model M.gguf --ids 1,2,3 [--prefill] [--int8] [--nlogits N] [--gen N] [--ref-dir D] [--ref-logits F] [--dump-logits F] [--cmp-logits F] [--ctx N] [--skip a,b]\n"); return 1; }
@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     const bool wantCompare = !refLogits.empty() || !dumpLogits.empty() || !cmpLogits.empty();
     const uint32_t nl = wantCompare ? (nlogits > 0 ? (uint32_t)std::min<size_t>(nlogits, std::min<size_t>(ntok, 128)) : (uint32_t)std::min<size_t>(ntok, 128)) : 1;   // positions we keep logits for: the last nl
     const uint32_t dbg = refDir.empty() ? 0 : (uint32_t)ntok;
-    Engine eng; if (!eng.load(model, metallib, ctx, dbg)) return 1; eng.int8Mode = int8;
+    Engine eng; if (!eng.load(model, metallib, ctx, dbg)) return 1; eng.setI8(i8spec.empty() ? (int8 ? "all" : "") : i8spec); int8 = eng.int8Mode;
     { size_t p = 0; while (p < skipArg.size()) { size_t q = skipArg.find(',', p); if (q == std::string::npos) q = skipArg.size(); eng.skip.push_back(skipArg.substr(p, q - p)); p = q + 1; } }
     std::vector<float> mine((size_t)nl * nv, 0.0f);   // logits of the last nl prompt positions
     int next = 0;

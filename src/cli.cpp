@@ -57,17 +57,17 @@ struct Session {
 
 int cmdRun(int argc, char** argv, bool interactive) {
     std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false; int maxTokens = 512; uint32_t ctx = 8192;
-    CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); bool fast = false;
+    CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
         if (a == "--model") model = nx(); else if (a == "--prompt") prompt = nx(); else if (a == "--file") { prompt = readFile(argv[++i]); haveFile = true; } else if (a == "--system") system = nx(); else if (a == "--raw") raw = true;
         else if (a == "--no-think") noThink = true; else if (a == "--effort") effort = nx(); else if (a == "--max-tokens") maxTokens = atoi(nx().c_str()); else if (a == "--ctx") ctx = (uint32_t)atoi(nx().c_str());
         else if (a == "--temp") sp.temp = (float)atof(nx().c_str()); else if (a == "--top-k") sp.topK = atoi(nx().c_str()); else if (a == "--top-p") sp.topP = (float)atof(nx().c_str()); else if (a == "--min-p") sp.minP = (float)atof(nx().c_str());
-        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") fast = true; else if (a == "--exact") fast = false; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
+        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") i8spec = "all"; else if (a == "--fast-ffn") i8spec = "ffn"; else if (a == "--i8") i8spec = nx(); else if (a == "--exact") i8spec = ""; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
     }
     if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: bonsai run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       bonsai chat --model M.gguf [same options]\n"); return 1; }
-    Session S; S.ctx = ctx; S.fast = fast;
-    if (!S.eng.load(model, metallib, ctx, 0)) return 1; S.eng.int8Mode = fast; const bool spec = S.eng.hasMtp && !noSpec; S.eng.mtpTrack = spec;
+    Session S; S.ctx = ctx; S.fast = !i8spec.empty();
+    if (!S.eng.load(model, metallib, ctx, 0)) return 1; if (!S.eng.setI8(i8spec)) { fprintf(stderr, "--i8: unknown matrix name in \"%s\" (qkv z ssmout wq wk wv wo gate up down, all, ffn)\n", i8spec.c_str()); return 1; } const bool fast = S.eng.int8Mode; const bool spec = S.eng.hasMtp && !noSpec; S.eng.mtpTrack = spec;
     SpecStats sst;
     PrefixCache cache(S.eng, cc, spec); S.cache = &cache;
     if (!S.tok.load(S.eng.gg)) return 1;
@@ -107,7 +107,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
     // interactive chat: keep the KV cache and the GDN state; each turn only prefills the new suffix
     std::thread warm([&]() { S.eng.warmup(); });   // hides the ~3 s cold start behind the time the user spends typing
     struct Joiner { std::thread& t; ~Joiner() { if (t.joinable()) t.join(); } } joiner{warm};
-    fprintf(stderr, "bonsai chat (%s path). Empty line or /quit to exit, /reset to start over.\n", fast ? "int8 fast" : "exact");
+    fprintf(stderr, "bonsai chat (%s). Empty line or /quit to exit, /reset to start over.\n", fast ? ("int8 prefill: " + S.eng.i8Names()).c_str() : "exact path");
     bool firstTurn = true; std::string line;
     while (true) {
         fputs("\n> ", stdout); fflush(stdout); if (!std::getline(std::cin, line)) break; if (line == "/quit" || line.empty()) break;
@@ -181,8 +181,8 @@ int cmdVerifyCheck(int argc, char** argv) {
 // bonsai kl-eval: quality of the int8 prefill path against the exact fp16 path on a text corpus. Both paths prefill the corpus chunk by chunk (each with its own state);
 // at the last `keep` positions of every chunk the full-vocabulary distributions are compared (the first pass spills its logits to a temp file).
 int cmdKlEval(int argc, char** argv) {
-    std::string model, file, metallib = "build/bonsai.metallib", spill = "/tmp/bonsai_kl_spill.bin", saveRef, cmpRef; int ntok = 16384, keep = 64, chunk = 1024;
-    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--file") file = argv[++i]; else if (a == "--tokens") ntok = atoi(argv[++i]); else if (a == "--keep") keep = atoi(argv[++i]); else if (a == "--save-ref") saveRef = argv[++i]; else if (a == "--ref") cmpRef = argv[++i]; else if (a == "--chunk") chunk = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
+    std::string model, file, metallib = "build/bonsai.metallib", spill = "/tmp/bonsai_kl_spill.bin", saveRef, cmpRef, i8spec = "all"; bool i8given = false; int ntok = 16384, keep = 64, chunk = 1024;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--file") file = argv[++i]; else if (a == "--tokens") ntok = atoi(argv[++i]); else if (a == "--keep") keep = atoi(argv[++i]); else if (a == "--i8") { i8spec = argv[++i]; i8given = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8given = true; } else if (a == "--save-ref") saveRef = argv[++i]; else if (a == "--ref") cmpRef = argv[++i]; else if (a == "--chunk") chunk = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
     if (model.empty() || file.empty()) { fprintf(stderr, "usage: bonsai kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n"); return 1; }
     Engine eng; if (!eng.load(model, metallib, (uint32_t)ntok + 64, 0)) return 1; Tokenizer tok; if (!tok.load(eng.gg)) return 1;
     std::vector<int32_t> ids = tok.encode(readFile(file.c_str()), false); if ((int)ids.size() > ntok) ids.resize((size_t)ntok);
@@ -190,13 +190,13 @@ int cmdKlEval(int argc, char** argv) {
     const bool single = !saveRef.empty() || !cmpRef.empty();   // --save-ref / --ref: one pass with the configuration of this process (e.g. BONSAI_KV=int8) instead of exact-vs-int8 in one process
     FILE* sp = fopen(single ? (saveRef.empty() ? cmpRef.c_str() : saveRef.c_str()) : spill.c_str(), single && saveRef.empty() ? "rb" : "wb+"); if (!sp) { perror("spill"); return 1; }
     auto pass = [&](bool int8, auto&& onLogits) {
-        eng.int8Mode = int8; eng.resetState();
+        eng.setI8(int8 ? i8spec : ""); eng.resetState();
         for (int pos = 0; pos < n; pos += chunk) { const int m = std::min(chunk, n - pos); const int nl = std::min(keep, m); std::vector<int> t(ids.begin() + pos, ids.begin() + pos + m); eng.prefill(t.data(), (uint32_t)m, (uint32_t)pos, -1, true, (uint32_t)nl); onLogits(eng.logitsAll(), nl); }
     };
-    if (!saveRef.empty()) { pass(eng.int8Mode, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fclose(sp); printf("saved the reference logits of this configuration to %s\n", saveRef.c_str()); return 0; }
+    if (!saveRef.empty()) { pass(i8given, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fclose(sp); printf("saved the reference logits of this configuration to %s\n", saveRef.c_str()); return 0; }
     if (!single) { pass(false, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fflush(sp); fseek(sp, 0, SEEK_SET); }
     double sumKl = 0, maxKl = 0, sumAbs = 0; size_t cnt = 0, agree = 0; std::vector<float> ref((size_t)keep * V);
-    pass(single ? eng.int8Mode : true, [&](const float* lg, int nl) {
+    pass(single ? i8given : true, [&](const float* lg, int nl) {
         if (fread(ref.data(), 4, (size_t)nl * V, sp) != (size_t)nl * V) { fprintf(stderr, "spill read failed\n"); exit(1); }
         for (int r = 0; r < nl; r++) {
             const float* a = ref.data() + (size_t)r * V; const float* b = lg + (size_t)r * V; double ma = -1e30, mb = -1e30; int ba = 0, bb = 0;
