@@ -17,7 +17,7 @@ kernel void k_gemv_x(device const uchar* W [[buffer(0)]], device const half* x [
             float yl[16]; float sy = 0.0f;
             if (MODE == 1) { for (uint i = 0; i < 16; i++) { yl[i] = float(b * 16u + i + t) * 0.001f; sy += yl[i]; } yq[t] = float(b + t) * 0.002f; }
             else {
-                device const half* xb = (MODE == 3 ? (threadgroup const half*)nullptr : nullptr) ? nullptr : (device const half*)(x + ulong(t) * K + b * 128u);
+                device const half* xb = x + ulong(t) * K + b * 128u;
                 if (MODE == 3) { threadgroup const half* xt = xs + t * K + b * 128u;
                     for (uint k = 0; k < 2; k++) for (uint n = 0; n < 5; n++) { float v = float(xt[n * 16 + 2 * it + k]); yl[5 * k + n] = v; sy += v; }
                     for (uint n = 0; n < 5; n++) { float v = float(xt[80 + n * 8 + it]); yl[10 + n] = v; sy += v; }
