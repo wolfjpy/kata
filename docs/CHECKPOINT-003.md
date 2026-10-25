@@ -141,7 +141,7 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 | **M14 ❌(2026-10-25,`reports/M14-wide-verify-gate.md`:T=8 是 T=2 的 2.2–2.3×,闸门 1.5× 未通过)** | **宽验证微基准闸门**:`matmul2d` 每 simdgroup 私有 tile,M=8,权重 LUT 解码进私有 TG tile;测 T=4/8 | **T=8 每矩阵 ≤ 1.5 × T=2(≈ 260 µs @ ffn_gate)才算通过**;否则停止 DFlash2,在报告里结案 | 闸门 |
 | **M15 ⏹(M14 未通过,取消)** | (仅当 M14 通过)ReplaySSM 重放 + 宽验证接入引擎 + 采样兼容 | verify-check:KL ≤ 1e-5;T=4/8 验证周期 ≤ 1.5× T=2 | DFlash2 的前提 |
 | **M16 ⏹(M14 未通过,取消)** | (仅当 M15 完成)DFlash2 移植(Q8_0 或 Q4_K_M 草稿权重 + 宽 GEMV;上下文物化器、动态卷积、选择器、滑窗注意力) | 与 llama.cpp `draft-dflash` 的接受长度一致(代码 ~5.1);无损;代码/推理 ≥ 50 tok/s | 解码 2×(代码/推理) |
-| **M17** | 小项:suffix drafter + 在线成本策略(有宽验证后才有意义);单命令缓冲区草稿+验证;草稿词表子集(131K 行) | 各自的收益 ≥ 1% 才保留 | ≤ 5% |
+| **M17 ⏹(2026-10-25,`reports/M17-small-items.md`:QoS、NEON 采样没有可测效果;单命令缓冲区 ~1.7%、词表子集 ~1.4%、suffix drafter 无宽验证则无意义——都推迟)** | 小项:suffix drafter + 在线成本策略(有宽验证后才有意义);单命令缓冲区草稿+验证;草稿词表子集(131K 行) | 各自的收益 ≥ 1% 才保留 | ≤ 5% |
 
 顺序理由:M9–M13 都是有数据支撑、风险低的收益;M14 是 DFlash2 的决策闸门,放在 M13 之后,但如果前面的里程碑出现阻塞可以提前做。
 
@@ -175,3 +175,32 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 | ninfer 上下文缓存 | `refs/ninfer/docs/maintainer/resource-scheduling-and-context-cache.md`、`paged-kv-cache.md` |
 | 本轮探针 | `docs/probes/simdgroup_mma_probe.*`、`matmul2d_mixed_type_probe.cpp`、`residency_untracked_experiment.diff`;`tools/{weight_read_probe,kv_read_probe,bench_gemv2,probe_flash,alu_probe,layout_probe}.cpp` |
 | 草稿接受率日志 | `/tmp/ss_*.log`(临时);汇总在 `reports/M7-speculation-options.md` |
+
+## 11. 路线图的最终结果(2026-10-25)
+
+| 里程碑 | 结果 |
+|---|---|
+| M8 | ✅ 本文档 |
+| M9 | ✅ 持久化前缀缓存:2.9K token 系统提示 15 s → 1.15 s(聊天首轮);重复的 3.6K 提示 18.6 s → 0.03 s;输出逐字节一致 |
+| M10 | ⏸ 采样感知草稿:离线估计只多 5 个点(闸门 9),实现推迟(可选,+2–3%) |
+| M11 | ✅ `--kv int8`:KL 1.3e-4、top-1 99.71%、大海捞针 3/3;内存减半;29K 上下文解码 +14%、预填充 +10%;短上下文无速度收益;默认关 |
+| M12 | ⏹ 权重布局:暂存宽读取原型没有提升(GEMV 不受读取宽度限制),不实现 |
+| M13 | ✅ `--fast-ffn`:预填充 +7–9.5%,KL 7.5e-5、top-1 99.87%(过门限);默认关 |
+| M14 | ❌ 宽验证闸门:T=8 是 T=2 的 2.2–2.3×(闸门 1.5×),DFlash2 结案 |
+| M15、M16 | ⏹ 取消(M14 未通过) |
+| M17 | ⏹ 小项都低于 1% 保留线 |
+
+### 现状的数字(与 CHECKPOINT-002 相比的变化)
+- 解码:普通 19.8、MTP 25.0(贪心)/ 22.7(采样)tok/s;29K 上下文 13.7 tok/s,`--kv int8` 15.6。
+- 预填充:精确 255–263 tok/s(1024 chunk)、245(512)、207–213(7.3K);`--fast-ffn` 274–280(+7–8%)、7.3K 226.5(+9.5%);`--fast`(全部 int8,不达标)281。
+- agent / 聊天:相同的长系统提示第二次起恢复,首包从十几秒到约 1 s。
+
+### 本轮的新增文件
+`src/ckpt.{h,cpp}`(前缀缓存)、`shaders/wide.metal`、`tools/{bench_wide,test_cache.sh}`、`reports/M9–M14,M17`;`kl-eval` 的 `--save-ref/--ref/--fast-ffn/--i8`;`bonsai cache`、`bonsai mtp-accept`;`--kv int8`、`--fast-ffn`、`--i8 list`、`--no-cache/--cache-dir/--cache-gb/--cache-min`。
+
+### 仍然开放的方向(按预期收益)
+1. 解码的剩余时间:验证 GEMV 113 GB/s(~51 ms)和草稿(~6 ms)。M12 说明读取宽度不是限制;未试的是 T=1/T=2 的 LUT + half2 把 ALU 指令数减半(同时改读取和解码的重叠)。
+2. 预填充非 GEMM 开销约 1 s/1024 token(展开 0.56 s + 其它 0.4 s):融合反量化进 GEMM(大改)。
+3. 采样感知草稿(+2–3%,采样模式)、单命令缓冲区草稿+验证(+1.7%)。
+4. 前缀缓存的分段链式存储(去掉"消息边界 + 结尾"两份检查点的 ~2× 冗余)。
+5. M14 里唯一没试的变体:从寄存器喂 B 操作数(`get_right_input_cooperative_tensor`)。
