@@ -51,6 +51,12 @@ DFlash2: 24 rounds, 24 tokens, 1.00 tokens/round, 142.6 ms/round
 - `BONSAI_DBG_DRAFT=1`:打印草稿提案与主干值、logits 量级。
 - `--vwidth T`:宽验证的"只接受第 0 行必须复现贪心"回归。
 
+## 4.5 模型文件的选择(用户的更正)
+
+- `bonsai-2-27b-mtp-ptq1_0.gguf`(Ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`)= PrismML 的 PTQ1_0 + 额外一层 `blk.64.*`(q8_0,约 0.45 GB)的 MTP 头;**其余每个 key/张量与 PrismML 文件逐字节相同**。
+- **若用 DFlash2 当草稿,应当用源文件 `Ternary-Bonsai-2-27B-PTQ1_0.gguf`(prism-ml),不带 blk.64**:省 0.45 GB 常驻,且这正是 DFlash2 的配套组合。
+- 我们两个文件都测过:主干张量相同,所以 trunk 数值与 `--vwidth` 回归一致;DFlash2 的 tap 采集与草稿行为不受影响(这也交叉验证了"只多了 blk.64"的说法)。下载中的文件:`../../models/bonsai-2-27b-ptq1_0-src.gguf`。
+
 ## 5. 本轮的完整进展(追加)
 
 **已修复 4 个 bug**,每一个都用可观测的现象确认:
