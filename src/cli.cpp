@@ -301,8 +301,8 @@ int cmdDflashEval(int argc, char** argv) {
         accepted += (uint64_t)match; produced += F; g += (int)F; pos += F; anchor = am[F - 1];
         if (rounds < 3 || getenv("BONSAI_DBG_DRAFT")) { printf("  round %llu: drafts", (unsigned long long)rounds); for (int i = 0; i < T - 1; i++) printf(" %d", d[i]); printf("\n            trunk  "); for (int i = 0; i < T - 1; i++) printf(" %d", am[i]); printf("\n            accept %d -> %u tokens\n", match, F); }
     }
-    printf("DFlash2: %llu rounds, %llu tokens, %.2f tokens/round, %.1f ms/round, %.1f tok/s (verify+commit %.1f ms/round)\n",
-           (unsigned long long)rounds, (unsigned long long)produced, (double)produced / rounds, 1e3 * roundSec / rounds, produced / (roundSec + 1e-9),
-           1e3 * roundSec / rounds);
+    printf("DFlash2: %llu rounds, %llu tokens, %.2f tokens/round, %.1f%% drafts accepted, %.1f ms/round, %.1f tok/s\n",
+           (unsigned long long)rounds, (unsigned long long)produced, (double)produced / rounds, 100.0 * accepted / (rounds * (T - 1)), 1e3 * roundSec / rounds,
+           produced / (roundSec + 1e-9));
     return 0;
 }
