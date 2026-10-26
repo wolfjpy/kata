@@ -129,3 +129,22 @@ build/dump_attn ../../models/bonsai-2-27b-ptq1_0-src.gguf ../../models/drafters/
 BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_t(commit 之后写文件)
 ```
 注意一个反复踩的坑:**诊断 dump 必须在 `waitUntilCompleted` 之后**(shared buffer 在编码阶段还没被 GPU 写),我曾两次因此读到旧数据、误判 `fc` 有错。
+
+## 11. 两个 Bonsai 专用草稿(用户提供的新文件)
+
+| 文件 | 大小 | 量化类型 | 旋转基 | 需要什么 |
+|---|---|---|---|---|
+| `Cyronius/Qwen3.8-27B-DFlash2-Bonsai2-ternary` | 746 MB | **type 142(2-bit prism)×46**、F32×32、BF16×3 | **是**:自带 `prism.hadamard.sign_widths = [4096, 5120, 17408, 25600]`、`sign_mode = explicit`、`sign_values`、`weight_names`(逐个列出哪些矩阵是旋转的);`borrowed.signs_folded = output_norm, selector_hidden_cols` | 2-bit prism 解码 + 每个旋转矩阵输入做 FWHT(还多出 4096 与 25600 两个宽度,不在主干 GGUF 里) |
+| `Schiltmans/Ternary-Bonsai-2-27B-DFlash2-ft5-Q2_K` | 623 MB | Q2_K×34、Q3_K×10、Q4_K×5 | **否**(无 prism 元数据,常规基) | Q2_K + Q3_K 解码(现有管线即可) |
+
+两者都是 `target_layers = [6,20,34,48,62]`(1 基边界),即 0 基块 **5/19/33/47/61**;`Cyronius` 的 `config.json` 明确写 `[5,19,33,47,61]`,与 ninfer 文档一致 → 我们的 `BONSAI_TAP_SHIFT=-1` 是正确设置。
+
+**代码改动**:`k_draft_mm` 的模板参数从 `bool Q6` 改为 `int QT`(0=Q4_K,1=Q6_K,2=Q2_K,3=Q3_K),按每个张量自己的 GGUF 类型选择解码器;GGUF 加载器识别 Q2_K(84 B/256)、Q3_K(110 B/256)、PQ2_0(type 142)。
+
+**验证状态**:
+- Q2_K 解码 **通过**(与 ggml 的 `dequantize_row_q2_K` 对照,ffn_gate 5120 宽)。
+- Q3_K 仍不对(17408 宽的张量行 0 与 ggml 不一致)。本轮已修两个错:qs 在 hmask 之后的偏移(+32)、每半 super-block 的 scale 索引漏了 `half_*8`。剩余差异未定位。
+- 因为 ft5 的 down 矩阵是 Q3_K,草稿仍不可用,接受率 0%。
+- ternary 那个需要一条新的算术路径(2-bit prism 解码 + FWHT),本轮未开始。
+
+**下一步**:①把 Q3_K 对着 ggml 逐元素比(用 `k_dq_q3k` 式的探针,像 Q4_K 那样一次定位);②ternary 草稿:实现 type 142 解码 + 在 `fc`/`attn_conv_proj`/`attn_q/k/v/o`/`ffn_*` 的输入侧插入 FWHT(宽度 4096/5120/17408/25600 用它自带的符号向量),并把 `output_norm`/`selector_hidden` 的符号折叠考虑进去。
