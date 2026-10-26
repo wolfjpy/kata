@@ -5,7 +5,7 @@
 ## 1. 现在能跑什么
 
 ```
-build/kata dflash-eval --model ../../models/Bonsai 2-mtp-ptq1_0.gguf \
+build/kata dflash-eval --model ../../models/bonsai-2-27b-mtp-ptq1_0.gguf \
   --draft ../../models/drafters/dflash2-q4km.gguf --ids "$(cat /tmp/ids72.txt)" --gen 24
 ```
 输出骨架(实测):
@@ -53,9 +53,9 @@ DFlash2: 24 rounds, 24 tokens, 1.00 tokens/round, 142.6 ms/round
 
 ## 4.5 模型文件的选择(用户的更正)
 
-- `Bonsai 2-mtp-ptq1_0.gguf`(Ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`)= PrismML 的 PTQ1_0 + 额外一层 `blk.64.*`(q8_0,约 0.45 GB)的 MTP 头;**其余每个 key/张量与 PrismML 文件逐字节相同**。
+- `bonsai-2-27b-mtp-ptq1_0.gguf`(Ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`)= PrismML 的 PTQ1_0 + 额外一层 `blk.64.*`(q8_0,约 0.45 GB)的 MTP 头;**其余每个 key/张量与 PrismML 文件逐字节相同**。
 - **若用 DFlash2 当草稿,应当用源文件 `Ternary-Bonsai-2-27B-PTQ1_0.gguf`(prism-ml),不带 blk.64**:省 0.45 GB 常驻,且这正是 DFlash2 的配套组合。
-- 我们两个文件都测过:主干张量相同,所以 trunk 数值与 `--vwidth` 回归一致;DFlash2 的 tap 采集与草稿行为不受影响(这也交叉验证了"只多了 blk.64"的说法)。下载中的文件:`../../models/Bonsai 2-ptq1_0-src.gguf`。
+- 我们两个文件都测过:主干张量相同,所以 trunk 数值与 `--vwidth` 回归一致;DFlash2 的 tap 采集与草稿行为不受影响(这也交叉验证了"只多了 blk.64"的说法)。下载中的文件:`../../models/bonsai-2-27b-ptq1_0-src.gguf`。
 
 ## 5. 本轮的完整进展(追加)
 
@@ -125,7 +125,7 @@ row 0 自洽只证明"恒等路径"(embedding → 5 层 → 共享词表头)能�
 
 ```
 make build/dump_attn                     # 把第 0 层的嵌入/Q/ring/注意力输出/卷积输入输出 dump 到 /tmp
-build/dump_attn ../../models/Bonsai 2-ptq1_0-src.gguf ../../models/drafters/dflash2-q4km.gguf
+build/dump_attn ../../models/bonsai-2-27b-ptq1_0-src.gguf ../../models/drafters/dflash2-q4km.gguf
 KATA_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_t(commit 之后写文件)
 ```
 注意一个反复踩的坑:**诊断 dump 必须在 `waitUntilCompleted` 之后**(shared buffer 在编码阶段还没被 GPU 写),我曾两次因此读到旧数据、误判 `fc` 有错。

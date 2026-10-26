@@ -11,8 +11,8 @@ speculative-decoding head.
 | | |
 |---|---|
 | **Weights on disk / in memory** | 6.4 GB single GGUF (27B parameters: ternary weights with fp16 group scales, plus a Q8_0 MTP head) |
-| **Prefill** | 280 tok/s (1K chunk) · 227 tok/s (7.3K prompt) |
-| **Decode** | 25.4 tok/s prose · 28–29 tok/s reasoning · 31.6 tok/s structured code (greedy) |
+| **Prefill** | 240 tok/s (`pp512`, exact) · 227 tok/s (7.3K prompt, `--fast-ffn`) |
+| **Decode** | 18.9 tok/s plain autoregressive · 25.6 tok/s with MTP speculation · 31.6 tok/s on structured code |
 | **Context** | 32K (fp16 KV ≈ 2.1 GB, int8 KV ≈ 1.1 GB, opt-in) |
 | **Hardware** | Apple M6, 16 GB unified memory, Metal 4 |
 
@@ -37,7 +37,7 @@ speculative-decoding head.
 ## Quick start
 
 ```bash
-# 1. Build (Xcode command line tools, macOS 15+; Metal 4 / MPP needs a recent SDK)
+# 1. Build (Xcode command line tools; needs macOS 26+ and an SDK with Metal 4 / MPP)
 make            # builds build/kata, build/kata.metallib and the dev tools
 
 # 2. Get the model: a single GGUF (~6.4 GB), e.g.
@@ -226,6 +226,7 @@ This engine is a clean-room implementation, but it would not exist without these
   dequantisation (`prism_ptq1_0_quant_dequant.c`), the Metal gated-DeltaNet kernel
   (`prism_metal_gated_delta_net.metal`) and the T=4 verification graph (`prism_qwen35_graph.cpp`). These were read as
   the specification for numerics; the kernels here are independently written.
+- `third_party/metal-cpp` — Apple's metal-cpp headers, MIT, licence included in that directory.
 - [baseRT](https://github.com/basecompute/baseRT) — reference reading for the Metal 4 / Metal Performance Primitives
   compute path (tensor ops, cooperative tensors, command-buffer structure).
 - [ninfer](https://github.com/Neroued/ninfer) — a from-scratch Metal inference engine; useful as an independent

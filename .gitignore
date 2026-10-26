@@ -3,3 +3,7 @@ build/
 *.o
 *.air
 *.metallib
+/*.pdf
+/*.png
+/*.webp
+/.DS_Store

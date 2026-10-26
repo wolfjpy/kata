@@ -3,7 +3,7 @@
 #   sh tools/test_cache.sh [model.gguf]
 # Checks: a restored run equals the uncached run (greedy and seeded sampling), the writing run equals it too, a whole-prompt hit equals the
 # run that wrote it, the int8 path never uses an fp16 checkpoint, a truncated checkpoint is ignored and rewritten.
-M=${1:-../../models/Bonsai 2-mtp-ptq1_0.gguf}; B=build/kata; D=$(mktemp -d); export KATA_CACHE_DIR=$D/cache
+M=${1:-../../models/bonsai-2-27b-mtp-ptq1_0.gguf}; B=build/kata; D=$(mktemp -d); export KATA_CACHE_DIR=$D/cache
 SYS=$(head -c 14000 docs/CHECKPOINT-001.md); Q="Describe the structure of the document in two sentences."
 fail=0; check() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 run() { $B run --model "$M" --system "$SYS" --prompt "$Q" --no-think --max-tokens 60 "$@" 2>"$D/err" ; }

@@ -78,7 +78,7 @@ curl -sL -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' https
 | `Apple Silicon 的 CPU 核心分三类:.md` | 用户的第二批笔记(CPU/ANE/Metal 4 编码/内存预算/各种要求) | `0fcc132431f106d05ff15a18ecd29d80207e4cd6ea99ef9ea34c17ad0f708835` |
 | `Apple M6 vs M5 Chip Deep-Dive.png` | M5 对 M6 的 die shot(见 §6.1) | `de5fa4deea03868d96c145aa177ab830cb68902ef35ba4be04e36d2a58ef1606` |
 | `qwen3.5.webp` | Sebastian Raschka 的 Qwen3.5 架构图(Gated Attention、Gated DeltaNet、3:1 比例、KV 随上下文增长对比) | `533a8c1a58564632a45923e42ecd1f085a00d84c2102d6676ac6807154dde10d` |
-| `Bonsai 2-whitepaper.pdf` | Prism 白皮书(2026-09),14 页 | `aea10331ede3b34c34c21d1a45b80fd0fd6e231b3e8db7bd6346e20fcb8402c4` |
+| `bonsai-2-27b-whitepaper.pdf` | Prism 白皮书(2026-09),14 页 | `aea10331ede3b34c34c21d1a45b80fd0fd6e231b3e8db7bd6346e20fcb8402c4` |
 | `BaseRT-base.pdf` | BaseRT 第一篇论文,arXiv 2607.00501v1,11 页 | `722762bc076985b4da743dcf7cfe761e147c2f294e7905b1ac919a48f577eb54` |
 | `baseRT.pdf` | BaseRT 第二篇论文(M5 Neural Accelerator),arXiv 2607.19438v1,8 页 | `28e5a6efacb3eee1fac0227e8571cd297636ec16be463f5c3c41085811d7120f` |
 | `Metal-Feature-Set-Tables.pdf` | Apple 官方,2026-05-21,到 Apple10(M5)为止,18 页 | `9f31df15dd6827545702c5a0845f6e36e1889878cd0e534123bd70211e5c00a8` |
@@ -223,7 +223,7 @@ projects/kata/
 ├── Apple Silicon 的 CPU 核心分三类:.md                 # 用户的第二批笔记
 ├── Apple M6 vs M5 Chip Deep-Dive.png
 ├── qwen3.5.webp
-├── BaseRT-base.pdf  baseRT.pdf  Bonsai 2-whitepaper.pdf
+├── BaseRT-base.pdf  baseRT.pdf  bonsai-2-27b-whitepaper.pdf
 ├── Metal-Feature-Set-Tables.pdf  Metal-Shading-Language-Specification.pdf
 └── docs/
     ├── CHECKPOINT-001.md      # 本文件
@@ -486,7 +486,7 @@ typedef struct {
 
 ## 7. 参考资料摘要
 
-### 7.1 Prism 白皮书(`Bonsai 2-whitepaper.pdf`,2026-09)
+### 7.1 Prism 白皮书(`bonsai-2-27b-whitepaper.pdf`,2026-09)
 
 - 架构同 Qwen3.8-27B:约 75% 线性注意力、25% full attention。
 - 权重:三值 {-1,0,+1} + fp16 group-128 scale,**固定旋转基**(1024 块 Hadamard,固定 ±1 符号)。有效 1.76 bpw/5.93GB(PTQ1_0),PQ2_0 为 2.16 bpw/7.25GB。**白皮书称 PTQ1_0 在 Apple silicon 上不比 PQ2_0 快**(解包更费算力)。

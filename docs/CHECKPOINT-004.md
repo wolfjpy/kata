@@ -5,7 +5,7 @@
 
 ## 0. 恢复指南
 
-- 项目:`<repo root>`;模型 `../../models/Bonsai 2-mtp-ptq1_0.gguf`;构建 `make`(约 6 s);参考仓库 `../../refs/{Strata,ninfer,llama.cpp-prism}`;草稿权重 `../../models/drafters/{dflash2-q4km.gguf,kata2-2b-ptq1.gguf}`。
+- 项目:`<repo root>`;模型 `../../models/bonsai-2-27b-mtp-ptq1_0.gguf`;构建 `make`(约 6 s);参考仓库 `../../refs/{Strata,ninfer,llama.cpp-prism}`;草稿权重 `../../models/drafters/{dflash2-q4km.gguf,bonsai2-2b-ptq1.gguf}`。
 - 用户本轮的四个决定(R2 §7):① 接受 r ≤ 1.6 作为继续条件;② 直接上 **Q4_K_M** 草稿,不走 Q8 中间态;③ **不限内存**,能跑多快就多快(16 GB UMA / 256 GB SSD);④ 接受 r≈2 的下界线。
 - 工作规则:回复中文;文档/报告中文;**提交信息只用英文**;每个里程碑独立提交并附报告;只提交自己生成的文件(根目录用户的 PDF/PNG/笔记绝不提交);有损开关必须过质量门限且默认关闭;测速必须交错 A/B(连续满载一分钟后会降频 ~10%)。
 

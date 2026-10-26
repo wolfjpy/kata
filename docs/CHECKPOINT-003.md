@@ -5,8 +5,8 @@
 
 ## 0. 恢复指南(先读这里)
 
-- 项目根:`<repo root>`。模型:`../../models/Bonsai 2-mtp-ptq1_0.gguf`。构建:`make`。
-- 参考仓库(在项目外,持久):`../../refs/Strata`(commit `4b9e05a`)、`../../refs/ninfer`(`64d10fb`)、`../../refs/llama.cpp-prism`(`b3ebc47`,另已额外编译 `llama-speculative-simple`)。drafter 权重:`../../models/drafters/`(`dflash2-q4km.gguf` 1.14 GB、`kata2-2b-ptq1.gguf` 0.43 GB)。
+- 项目根:`<repo root>`。模型:`../../models/bonsai-2-27b-mtp-ptq1_0.gguf`。构建:`make`。
+- 参考仓库(在项目外,持久):`../../refs/Strata`(commit `4b9e05a`)、`../../refs/ninfer`(`64d10fb`)、`../../refs/llama.cpp-prism`(`b3ebc47`,另已额外编译 `llama-speculative-simple`)。drafter 权重:`../../models/drafters/`(`dflash2-q4km.gguf` 1.14 GB、`bonsai2-2b-ptq1.gguf` 0.43 GB)。
 - 如果参考仓库不见了:`git clone https://github.com/Niko1221/Strata`、`https://github.com/Neroued/ninfer` 到 `../../refs/`。
 - 项目根里有一个未跟踪的文件 `1. **解码 GEMV 是 ALU 受限…(M4 §3)。T=.md`:是用户消息被保存下来的,不是我生成的,不要提交也不要删除。
 - 工作规则(用户要求):回复用中文;只提交自己生成的 `docs/ shaders/ src/ tools/ Makefile VERSIONS config/ third_party/ README.md`,**绝不提交用户放在根目录的 PDF/PNG/笔记**;提交信息用英文;每个里程碑独立提交并附报告;最新版本规则(每个阶段开始时重新核对上游版本并记入 `VERSIONS`);所有有损选项必须过质量门限(KL ≤ 1e-3 nat、top-1 ≥ 99.7%,≥20K token 语料,用 `kata kl-eval`)且默认关闭。

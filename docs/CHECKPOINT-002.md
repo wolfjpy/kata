@@ -49,7 +49,7 @@ Git:`a6020e4`(M0)→ `4318bf0`(M2)→ `89af761`/`d97f58a`(M3)→ `fbf5ccb`(M5)�
 
 ```sh
 make                                   # build/kata + build/kata.metallib
-M=../../models/Bonsai 2-mtp-ptq1_0.gguf
+M=../../models/bonsai-2-27b-mtp-ptq1_0.gguf
 build/kata run --model $M --prompt "..." --temp 0 --max-tokens 200         # MTP 默认开启;--no-spec 关闭
 build/kata --model $M --ids ... --prefill --repeat 2 [--int8]              # 预填充计时(第一次包含 ~2 s 冷启动)
 build/kata --model $M --ids ... --prefill --nlogits 72 --cmp-logits golden72.bin   # 对照保存的 fp32 logits
