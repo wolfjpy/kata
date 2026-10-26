@@ -88,21 +88,26 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
                 }
             }
         } else {
-            // Q6_K: one lane per (row, 16-element piece); decode element by element with the reference formula
-            constexpr uint PIECES = KC / 16;                          // 8 pieces of 16 elements per row per chunk
-            for (uint jobAll = lane; jobAll < N * PIECES; jobAll += 32u) {
-                const uint r = jobAll / PIECES, pc = jobAll % PIECES;
+            // Q6_K: a 128-weight chunk is one half of a super-block; the reference order is y[l], y[l+32], y[l+64], y[l+96] for l = 0..31,
+            // so one job = the 32 elements with a fixed quarter q4 (32 ql bytes + 32 qh bytes + 2 scales).
+            constexpr uint JOBS_PER_ROW = 4;                          // quarters; 32 elements each
+            for (uint jobAll = lane; jobAll < N * JOBS_PER_ROW; jobAll += 32u) {
+                const uint r = jobAll / JOBS_PER_ROW, q4 = jobAll % JOBS_PER_ROW;
                 device const uchar* bp = W + (ulong(min(row0 + r, Nout - 1u)) * ulong(nblk) + sb) * 210ul;
                 const float d = float(as_type<half>(*(device const ushort*)(bp + 208)));
-                device const uchar* ql = bp; device const uchar* qh = bp + 128; device const char* sc = (device const char*)(bp + 192);
-                for (uint i = 0; i < 16; i++) {
-                    const uint e = halfSel * 128u + pc * 16u + i;      // element inside the super-block
-                    const uint n = e >> 7, rr = e & 127u, l = rr & 31u, q4 = rr >> 5, is = l >> 4;
-                    const uint b = (q4 == 0) ? (ql[n*64 + l] & 0x0Fu) | (((qh[n*32 + l] >> 0) & 3u) << 4)
-                                 : (q4 == 1) ? (ql[n*64 + l + 32] & 0x0Fu) | (((qh[n*32 + l] >> 2) & 3u) << 4)
-                                 : (q4 == 2) ? (ql[n*64 + l] >> 4) | (((qh[n*32 + l] >> 4) & 3u) << 4)
-                                             : (ql[n*64 + l + 32] >> 4) | (((qh[n*32 + l] >> 6) & 3u) << 4);
-                    Bt[sg][r * LD + pc * 16u + i] = half(d * float(sc[n*8 + is + 2u*q4]) * float(int(b) - 32));
+                device const uchar* ql = bp + halfSel * 64u + (((q4 == 1u) || (q4 == 3u)) ? 32u : 0u);   // q4 1/3 read ql[l+32], q4 0/2 read ql[l]
+                device const uint4* qhp = (device const uint4*)(bp + 128 + halfSel * 32u);
+                device const char* sc = (device const char*)(bp + 192 + halfSel * 8u);
+                const uint sh = (q4 == 0u) ? 0u : (q4 == 1u) ? 2u : (q4 == 2u) ? 4u : 6u;  // qh bit pair
+                const bool hi = (q4 >= 2u);
+                const float dsc0 = d * float(sc[0 + 2u * q4]), dsc1 = d * float(sc[1 + 2u * q4]);
+                threadgroup half* out = &Bt[sg][r * LD + q4 * 32u];
+                for (uint e = 0; e < 32; e++) {
+                    const uint qlb = ql[e];
+                    const uint nib = hi ? (qlb >> 4) : (qlb & 0x0Fu);
+                    const uint hb = (((device const uchar*)qhp)[e] >> sh) & 3u;
+                    const int q = int(nib | (hb << 4)) - 32;
+                    out[e] = half((e < 16 ? dsc0 : dsc1) * float(q));
                 }
             }
         }
