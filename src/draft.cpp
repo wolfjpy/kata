@@ -61,8 +61,9 @@ void Draft::materialise(Engine& eng, const void* tapsFp16, uint32_t n) {
         memcpy((uint8_t*)catH->contents() + ((size_t)i * kTargets * H + t * H) * 2, src + ((size_t)t * n + i) * H, H * 2);
     MTL::CommandBuffer* cb = eng.gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     auto mm = [&](uint64_t off, MTL::Buffer* a, MTL::Buffer* y, uint32_t K, uint32_t N, bool) {
-        const bool q6 = isQ6(off);                                 // pick the decoder from the tensor's own type (Q4_K_M mixes Q4_K and Q6_K)
-        e->setComputePipelineState(eng.gpu.pipe(q6 ? "k_draft_mm_m8_n16_g4_qtrue" : "k_draft_mm_m8_n16_g4_qfalse"));
+        const int qt = qtypeOf(off);                               // the decoder comes from the tensor's own quant type
+        static const char* names[4] = {"k_draft_mm_m8_n16_g4_q0", "k_draft_mm_m8_n16_g4_q1", "k_draft_mm_m8_n16_g4_q2", "k_draft_mm_m8_n16_g4_q3"};
+        e->setComputePipelineState(eng.gpu.pipe(names[qt]));
         e->setBuffer(wbuf, off, 0); e->setBuffer(a, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4);
         e->dispatchThreadgroups(MTL::Size((N + 15) / 16, 1, 1), MTL::Size(128, 1, 1));
     };
@@ -108,8 +109,9 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
     { int32_t* tk = (int32_t*)tokbuf->contents(); for (uint32_t i = 0; i < T; i++) tk[i] = toksIn[i]; }
     MTL::CommandBuffer* cb = eng.gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     auto mm = [&](uint64_t off, MTL::Buffer* a, MTL::Buffer* y, uint32_t K, uint32_t N, bool) {
-        const bool q6 = isQ6(off);                                 // pick the decoder from the tensor's own type (Q4_K_M mixes Q4_K and Q6_K)
-        e->setComputePipelineState(eng.gpu.pipe(q6 ? "k_draft_mm_m8_n16_g4_qtrue" : "k_draft_mm_m8_n16_g4_qfalse"));
+        const int qt = qtypeOf(off);                               // the decoder comes from the tensor's own quant type
+        static const char* names[4] = {"k_draft_mm_m8_n16_g4_q0", "k_draft_mm_m8_n16_g4_q1", "k_draft_mm_m8_n16_g4_q2", "k_draft_mm_m8_n16_g4_q3"};
+        e->setComputePipelineState(eng.gpu.pipe(names[qt]));
         e->setBuffer(wbuf, off, 0); e->setBuffer(a, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4);
         e->dispatchThreadgroups(MTL::Size((N + 15) / 16, 1, 1), MTL::Size(128, 1, 1));
     };

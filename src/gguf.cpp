@@ -28,6 +28,8 @@ uint64_t tensorBytes(uint32_t type, uint64_t nelem) {
         case GGML_BF16: return nelem * 2;
         case GGML_Q8_0: return nelem / 32 * 34;
         case GGML_PTQ1_0: return nelem / 128 * 28;
+        case GGML_Q2_K: return nelem / 256 * 84;
+        case GGML_Q3_K: return nelem / 256 * 110;
         case GGML_Q4_K: return nelem / 256 * 144;
         case GGML_Q6_K: return nelem / 256 * 210;
         default: fprintf(stderr, "gguf: unsupported tensor type %u\n", type); exit(1);

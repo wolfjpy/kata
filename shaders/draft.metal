@@ -48,7 +48,50 @@ kernel void k_dq_q6k(device const uchar* src [[buffer(0)]], device float* dst [[
 // Draft matrix multiply: MT token rows (the block's 8 columns) x N output rows, Q4_K / Q6_K weights decoded once into a private fp16 tile and multiplied on the matrix unit.
 // Same tile geometry as k_wide: N rows per simdgroup, KC=128 weights per matmul2d call, NSG simdgroups per threadgroup, column-major tile with stride KC+8.
 // Q4_K job: one 16-byte piece of a 64-weight group = 16 low-nibble values (elements g*64 + 0..15) and 16 high-nibble values (elements g*64 + 32..47).
-template <int MT, int N, int NSG, bool Q6>
+// QT: 0 = Q4_K, 1 = Q6_K, 2 = Q2_K, 3 = Q3_K.  A 128-weight chunk is one half of a 256-weight super-block for all four.
+inline void q2k_chunk(device const uchar* bp, uint half_, uint jobAll, uint rows, threadgroup half* dst, uint LD) {
+    // 8 groups of 16 weights; job = (row, group). Job layout matches q4k: 4 jobs per row per chunk.
+    const uint r = jobAll / 8u, g = jobAll % 8u;                        // 8 groups per chunk
+    if (r >= rows) return;
+    device const uchar* q = bp + 64u - 64u;                             // qs at offset 16
+    device const uchar* qs = bp + 16;
+    const uint sc = bp[half_ * 8u + g];                                 // scales: 16 bytes, 8 per half
+    const float d = float(as_type<half>(*(device const ushort*)(bp + 80)));
+    const float dmin = float(as_type<half>(*(device const ushort*)(bp + 82)));
+    const float dl = d * float(sc & 0x0Fu), ml = dmin * float(sc >> 4);
+    const uint j = g >> 1, sh = 2u * j, h = g & 1u;                      // 4 shifts x 2 halves of 16
+    threadgroup half* out = dst + r * LD + g * 16u;
+    for (uint l = 0; l < 16; l++) {
+        const uint code = (qs[half_ * 32u + l + h * 16u] >> sh) & 3u;
+        out[l] = half(dl * float(code) - ml);
+    }
+    (void)q;
+}
+inline void q3k_chunk(device const uchar* bp, uint half_, uint jobAll, uint rows, threadgroup half* dst, uint LD) {
+    const uint r = jobAll / 8u, g = jobAll % 8u;
+    if (r >= rows) return;
+    const float d = float(as_type<half>(*(device const ushort*)(bp + 108)));
+    // unpack the 16 int8 scales from the 12 packed bytes
+    const uint k1 = 0x03030303u, k2 = 0x0f0f0f0fu;
+    uint aux[4]; for (uint i = 0; i < 3; i++) aux[i] = *(device const uint*)(bp + 96 + 4u * i); aux[3] = 0;
+    const uint t0 = aux[2];
+    uint a0 = (aux[0] & k2) | (((t0 >> 0) & k1) << 4), a1 = (aux[1] & k2) | (((t0 >> 2) & k1) << 4);
+    uint a2 = ((aux[0] >> 4) & k2) | (((t0 >> 4) & k1) << 4), a3 = ((aux[1] >> 4) & k2) | (((t0 >> 6) & k1) << 4);
+    const uint words[4] = {a0, a1, a2, a3};
+    const uint is = half_ * 8u + g;   // 8 scales per 128-weight half
+    const uint sc = (words[is >> 2] >> (8u * (is & 3u))) & 0xffu;
+    const float dl = d * (float(sc) - 32.0f);
+    const uint j = g >> 1, sh = 2u * j, h = g & 1u;
+    const uchar m = (uchar)(1u << (half_ * 4u + j));
+    threadgroup half* out = dst + r * LD + g * 16u;
+    for (uint l = 0; l < 16; l++) {
+        const uint idx = half_ * 32u + l + h * 16u;
+        const int code = int((bp[32u + idx] >> sh) & 3u) - ((bp[l + h * 16u] & m) ? 0 : 4);   // qs starts after the 32-byte hmask
+        out[l] = half(dl * float(code));
+    }
+}
+
+template <int MT, int N, int NSG, int QT>
 kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buffer(1)]], device float* y [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& Nout [[buffer(4)]],
                        uint tgid [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint tid [[thread_index_in_threadgroup]]) {
     constexpr int KC = 128, LD = KC + 8;
@@ -65,7 +108,7 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
     const uint half1 = nblk * 2u;                                 // KC=128 chunks (two per super-block)
     for (uint kc = 0; kc < half1; kc++) {
         const uint sb = kc >> 1, halfSel = kc & 1u;               // super-block and which 128-weight half
-        if (!Q6) {
+        if (QT == 0) {
             // Q4_K: 4 jobs per row per chunk (each 32 of the chunk's 128 weights); lanes: 32 = N rows x (32/N) jobs
             constexpr uint JOBS_PER_ROW = 4, PER_LANE = (N * JOBS_PER_ROW) / 32u;
             for (uint j = 0; j < PER_LANE; j++) {
@@ -87,6 +130,13 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
                     *(threadgroup half4*)(out + piece + 32 + 4 * k) = hi;                         // elements g*64 + 32 + piece + 4k .. +3
                 }
             }
+        } else if (QT == 2) {
+            device const uchar* bp_of = W + (ulong(min(row0, Nout - 1u)) * ulong(nblk) + sb) * 84ul; (void)bp_of;
+            for (uint rr = 0; rr < N; rr++) for (uint jobAll = lane; jobAll < 8u; jobAll += 32u) {
+                device const uchar* bp = W + (ulong(min(row0 + rr, Nout - 1u)) * ulong(nblk) + sb) * 84ul; q2k_chunk(bp, halfSel, rr * 8u + jobAll, N + 1u, &Bt[sg][0], LD); }
+        } else if (QT == 3) {
+            for (uint rr = 0; rr < N; rr++) for (uint jobAll = lane; jobAll < 8u; jobAll += 32u) {
+                device const uchar* bp = W + (ulong(min(row0 + rr, Nout - 1u)) * ulong(nblk) + sb) * 110ul; q3k_chunk(bp, halfSel, rr * 8u + jobAll, N + 1u, &Bt[sg][0], LD); }
         } else {
             // Q6_K: a 128-weight chunk is one half of a super-block; the reference order is y[l], y[l+32], y[l+64], y[l+96] for l = 0..31,
             // so one job = the 32 elements with a fixed quarter q4 (32 ql bytes + 32 qh bytes + 2 scales).
@@ -118,8 +168,8 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
     }
     for (uint i = 0; i < cC.get_capacity(); i++) if (cC.is_valid_element(i)) { auto ix = cC.get_multidimensional_index(i); const uint col = row0 + uint(ix[0]); if (col < Nout) y[ulong(ix[1]) * Nout + col] = cC[i]; }
 }
-#define DMM(MT, N, SG, Q6) template [[host_name("k_draft_mm_m" #MT "_n" #N "_g" #SG "_q" #Q6)]] kernel void k_draft_mm<MT, N, SG, Q6>(device const uchar*, device half*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
-DMM(8, 16, 4, false) DMM(8, 16, 4, true) DMM(16, 16, 4, false) DMM(16, 16, 4, true)
+#define DMM(MT, N, SG, QT) template [[host_name("k_draft_mm_m" #MT "_n" #N "_g" #SG "_q" #QT)]] kernel void k_draft_mm<MT, N, SG, QT>(device const uchar*, device half*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
+DMM(8, 16, 4, 0) DMM(8, 16, 4, 1) DMM(8, 16, 4, 2) DMM(8, 16, 4, 3) DMM(16, 16, 4, 0) DMM(16, 16, 4, 1)
 
 // =====================================================================================================================
 // DFlash2 draft layer ops.
