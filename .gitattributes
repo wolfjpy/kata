@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.metal text
+*.cpp text
+*.h text
+*.mm text
