@@ -39,6 +39,7 @@ bool Draft::load(Engine& eng, const std::string& path) {
         w.ffnCp = need(blkName("blk.%d.ffn_conv_proj.weight", il));
     }
     fc = need("fc.weight"); encNorm = need("enc.output_norm.weight"); outNorm = need("output_norm.weight");
+    selHidden = need("selector_hidden.weight"); selPred = need("selector_predecessor.weight"); selSucc = need("selector_successor.weight");
     // ternary drafters carry their own Hadamard basis: sign_widths lists the widths (4096/5120/17408/25600) and sign_values their concatenated signs
     std::vector<int32_t> widths = gg.signedInts("prism.hadamard.sign_widths"), vals = gg.signedInts("prism.hadamard.sign_values");
     if (!widths.empty() && widths.size() == 4) {
@@ -55,6 +56,7 @@ bool Draft::load(Engine& eng, const std::string& path) {
     // ring K/V (one ring per layer) and the block scratch
     const size_t ringBytes = (size_t)kLayers * kRing * kKvHeads * kHeadDim * 2;
     kbuf = eng.gpu.alloc(ringBytes); vbuf = eng.gpu.alloc(ringBytes);
+    selIn = eng.gpu.alloc((size_t)kNMax * kH * 2); gateBuf = eng.gpu.alloc((size_t)kNMax * 256 * 4);
     catH = eng.gpu.alloc((size_t)kNMax * 25600 * 2); catF = eng.gpu.alloc((size_t)kNMax * 25600 * 4); cf = eng.gpu.alloc((size_t)kNMax * kH * 4); cH = eng.gpu.alloc((size_t)kNMax * kH * 2);
     fcf = eng.gpu.alloc((size_t)kNMax * kH * 4); kvf = eng.gpu.alloc((size_t)kNMax * kKvHeads * kHeadDim * 4);
     nrmH = eng.gpu.alloc(kBlock * kH * 2); nrmf = eng.gpu.alloc(kBlock * kH * 4); aoutH = eng.gpu.alloc(kBlock * kHeads * kHeadDim * 2);
@@ -234,9 +236,62 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
     }
     // final RMSNorm with the draft's own output_norm, then the Hadamard basis of the shared PTQ1_0 head (sign vector only, no trunk gamma)
     rmsF(xA, outNorm, nrmf);
+    if (!rotated) f2h(nrmf, selIn, T * H); else f2h(nrmf, selIn, T * H);   // selector_hidden is plain BF16 and not rotated: feed the unrotated final norm
     { uint32_t W = H, mode = 0;
       e->setComputePipelineState(eng.gpu.pipe("k_rms_fwht_b")); e->setBuffer(nrmf, 0, 0); e->setBuffer(nrmf, 0, 1); e->setBuffer(eng.sign5120(), 0, 2); e->setBuffer(probs, 0, 3);
       e->setBytes(&W, 4, 4); e->setBytes(&mode, 4, 5); e->dispatchThreadgroups(MTL::Size(W / 1024, T, 1), MTL::Size(256, 1, 1)); }
     eng.xWideGemv(e, eng.offOutW(), probs, logitsOut, H, (uint32_t)kVocab, T);
     e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+}
+
+// DFlash2 selector. gate = selector_hidden (BF16, unrotated) x final-normed hidden; then per mask row the top-16 logits, the dual
+// codebooks gathered for the 16 successors and 16 predecessors, and a left-to-right conditional walk (greedy).
+uint32_t Draft::propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out) {
+    const int V = (int)kVocab; const uint32_t T = kBlock;
+    {   // gate projection on the GPU
+        MTL::CommandBuffer* cb = eng.gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
+        const uint32_t Kh = kH, Ng = 256, TT = T;
+        e->setComputePipelineState(eng.gpu.pipe("k_draft_bf16mm")); e->setBuffer(wbuf, selHidden, 0); e->setBuffer(selIn, 0, 1); e->setBuffer(gateBuf, 0, 2);
+        e->setBytes(&Kh, 4, 3); e->setBytes(&Ng, 4, 4); e->setBytes(&TT, 4, 5); e->dispatchThreadgroups(MTL::Size(Ng, T, 1), MTL::Size(256, 1, 1));
+        e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+    }
+    const float* lg = (const float*)logits->contents(); const float* gate = (const float*)gateBuf->contents();
+    const _Float16* pred = (_Float16*)gg.bytes(selPred);   // BF16 rows; we convert per row below
+    const ushort* predW = (const ushort*)gg.bytes(selPred); const ushort* succW = (const ushort*)gg.bytes(selSucc);
+    auto bf = [](ushort b) { const uint bits = (uint)b << 16; float f; memcpy(&f, &bits, 4); return f; };
+    (void)pred;
+    // per row: top-16 (ids sorted by score desc, matching ggml_top_k) and their unary logits
+    static const int TOP = 16;
+    int cand[8][TOP]; float unary[8][TOP];
+    for (uint32_t r = 0; r < T; r++) {
+        const float* row = lg + (size_t)r * V;
+        int ids[TOP]; float sc[TOP]; int n = 0;
+        for (int v = 0; v < V; v++) {
+            const float s = row[v];
+            if (n == TOP && !(s > sc[n - 1])) continue;
+            int pos = n; while (pos > 0 && sc[pos - 1] < s) pos--;
+            if (n == TOP) n--; for (int q = n; q > pos; q--) { sc[q] = sc[q - 1]; ids[q] = ids[q - 1]; }
+            sc[pos] = s; ids[pos] = v; n++;
+        }
+        for (int i = 0; i < TOP; i++) { cand[r][i] = ids[i]; unary[r][i] = sc[i]; }
+    }
+    // conditional walk: position 1's predecessor is the anchor (one row), later positions use the chosen predecessor's row
+    const uint32_t Kd = K - 1; if (Kd == 0) return 0;
+    int prevIdx = -1;
+    for (uint32_t p = 1; p <= Kd; p++) {
+        const uint32_t r = p;                       // row r of the block predicts position pos+p
+        float best = -INFINITY; int bestI = 0;
+        for (int c = 0; c < TOP; c++) {
+            float s = unary[r][c];
+            if (prevIdx >= 0) {   // rank-256 bilinear term: <W_pred[prev candidate id], g> * W_succ[cand id]
+                const int pid = cand[r - 1][prevIdx]; const ushort* pw = predW + (size_t)pid * 256; const ushort* sw = succW + (size_t)cand[r][c] * 256;
+                const float* g = gate + (size_t)r * 256; float acc = 0.0f;
+                for (int rr = 0; rr < 256; rr++) acc += bf(pw[rr]) * g[rr] * bf(sw[rr]);
+                s += acc;
+            }
+            if (s > best) { best = s; bestI = c; }
+        }
+        prevIdx = bestI; out[p - 1] = cand[r][bestI];
+    }
+    return Kd;
 }

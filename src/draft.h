@@ -24,7 +24,7 @@ struct Draft {
     struct LayerW { uint64_t q = 0, k = 0, v = 0, o = 0, qNorm = 0, kNorm = 0, attnNorm = 0, attnCb = 0, attnCp = 0,
                     gate = 0, up = 0, down = 0, ffnNorm = 0, ffnCb = 0, ffnCp = 0; };
     LayerW L[kLayers];
-    uint64_t fc = 0, encNorm = 0, outNorm = 0;
+    uint64_t fc = 0, encNorm = 0, outNorm = 0, selHidden = 0, selPred = 0, selSucc = 0;
     int32_t targetLayers[kTargets] = {6, 20, 34, 48, 62};
 
     static constexpr uint32_t kNMax = 64;                  // positions per materialise call
@@ -33,7 +33,7 @@ struct Draft {
     MTL::Buffer *fcf = nullptr, *kvf = nullptr, *nrmf = nullptr, *nrmH = nullptr;
     MTL::Buffer *xA = nullptr, *xB = nullptr, *tmpA = nullptr, *fout2 = nullptr, *gU = nullptr, *aoutH = nullptr, *kvf2 = nullptr, *ffnH = nullptr, *tmpB = nullptr;
     MTL::Buffer *x = nullptr, *nrm = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *aout = nullptr, *tmp = nullptr,
-                *dyn = nullptr, *fout = nullptr, *probs = nullptr, *tapsBuf = nullptr, *wbuf = nullptr;
+                *dyn = nullptr, *fout = nullptr, *probs = nullptr, *tapsBuf = nullptr, *wbuf = nullptr, *selIn = nullptr, *gateBuf = nullptr;
     MTL::Buffer *tokbuf = nullptr;
 
     bool load(Engine& eng, const std::string& path);
@@ -43,6 +43,9 @@ struct Draft {
     void materialise(Engine& eng, const void* tapsFp16, uint32_t n);
     // One masked forward at position pos: anchor token + masks; writes the block's logits (kBlock x vocab) to `logitsOut`.
     bool dumpLayer0 = false; MTL::Buffer* attnOut0 = nullptr; MTL::Buffer* qOut0 = nullptr; MTL::Buffer* convOut0 = nullptr; MTL::Buffer* convIn0 = nullptr; MTL::Buffer* convDyn0 = nullptr;   // diagnostic
+    // DFlash2 selector: per mask row take the top-16 candidates, score them with the rank-256 dual codebooks and walk one conditional path.
+    // Writes K-1 proposal tokens (positions pos+1 .. pos+K-1) and returns how many were written.
+    uint32_t propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out);
     void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // writes kBlock x vocab logits (synchronous)
     void forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);   // diagnostic: explicit block rows
 private:

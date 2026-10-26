@@ -321,7 +321,7 @@ int cmdDflashEval(int argc, char** argv) {
         if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double s0 = 0; int nz = 0;
             for (int k = 0; k < V; k++) { s0 += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
             fprintf(stderr, "[draft] row0 logits: %.4f %.4f %.4f ... sum|.| %.1f nonzero %d, argmax %d; row1 argmax %d\n", lg[0], lg[1], lg[2], s0, nz, argmaxOf(0), argmaxOf(1)); }
-        for (int i = 0; i < T - 1; i++) d[i] = argmaxOf(i + 1);
+        if (getenv("BONSAI_DF_ARGMAX")) { for (int i = 0; i < T - 1; i++) d[i] = argmaxOf(i + 1); } else dr.propose(eng, logits, (uint32_t)T, d);
         int win[8]; win[0] = anchor; for (int i = 0; i < T - 1; i++) win[i + 1] = d[i];
         auto r0 = std::chrono::steady_clock::now();
         eng.verifyWide(win, (uint32_t)T, pos, am, taps, dr.targetLayers, 5);

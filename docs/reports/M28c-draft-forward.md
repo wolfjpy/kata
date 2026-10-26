@@ -148,3 +148,24 @@ BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_
 - ternary 那个需要一条新的算术路径(2-bit prism 解码 + FWHT),本轮未开始。
 
 **下一步**:①把 Q3_K 对着 ggml 逐元素比(用 `k_dq_q3k` 式的探针,像 Q4_K 那样一次定位);②ternary 草稿:实现 type 142 解码 + 在 `fc`/`attn_conv_proj`/`attn_q/k/v/o`/`ffn_*` 的输入侧插入 FWHT(宽度 4096/5120/17408/25600 用它自带的符号向量),并把 `output_norm`/`selector_hidden` 的符号折叠考虑进去。
+
+## 12. DFlash2 选择器(按用户要求,不再用 DFlash1 的逐行 argmax)
+
+按 Prism 的 `build_dflash2_selector` 精确实现:
+
+1. `gate = selector_hidden @ h`(BF16,不旋转 → 输入是**未旋转**的最终归一化隐状态);新内核 `k_draft_bf16mm`(BF16 权重 × fp16 激活)。
+2. 每个 mask 行取 **top-16**(按分数降序,与 `ggml_top_k` 一致)及其 unary logits。
+3. 两个 rank-256 码本按需 gather(每行 256 个 BF16):`W_pred[prev_candidate_id]`、`W_succ[candidate_id]`。
+4. 条件走查:`score[c] = u[c] + Σ_r W_pred[P_prev, r] · g[r] · W_succ[C_c, r]`,第 1 个位置的前驱是 anchor(单行),之后用上一位置**选中的候选索引**作为前驱行 —— 与 ninfer 的
+   `E_i[p,c] = u_i[c] + Σ_r W_pred[pred_token(i,p),r] g_i[r] W_succ[C_i[c],r]` 一致。
+
+`BONSAI_DF_ARGMAX=1` 保留为 A/B(DFlash1 风格)。实测:提案序列与 argmax 明显不同(例如 760 4087 369 264 …),但**接受率仍只有 0.6%**。
+
+**这意味着缺口不在"argmax 还是选择器"**:选择器把候选约束成一条连贯路径,但它仍建立在草稿的逐行分布之上;而草稿的逐行分布本身就不够准(row 0 自洽、row 1 之后偏离)。所以问题回到**结构假设**——最可能是 `fc` 的 tap 拼接顺序/层号,或者块的输入语义(anchor 的位置)。
+
+## 13. 累计状态(供接手)
+
+- 已修 **11** 个 bug:PQ2_0/旋转基、Q3_K 两处、delta 索引、RoPE 约定、tap 位置、tap 采集缺失、K 头分支、norm 权重绑定、Q6_K dtype、fp16→float 转换。
+- 逐算子验证全部通过(解码 vs ggml:Q4_K/Q6_K/Q2_K/PQ2_0;卷积、注意力、fc vs 独立 CPU 实现;row 0 自洽且尖锐 logit 9.95 vs 8.40)。
+- 端到端接受率 ~1%(应有 ~70%),两个 Bonsai 专用草稿都是如此。
+- 结论:**剩下的误差是结构性的**,不是数值性的。若要继续,最有价值的是拿到一个 oracle:llama.cpp 在 `llama-speculative-simple --spec-type draft-dflash` 下对**同一提示**的逐位置草稿 token(目前没有日志钩子),或者官方转换脚本里 `target features` 的确切构造方式。

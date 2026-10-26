@@ -293,3 +293,16 @@ kernel void k_dq_pq2(device const uchar* src [[buffer(0)]], device float* dst [[
     const uint code = (bp[2 + (e >> 2)] >> (2u * (e & 3u))) & 3u;
     dst[e] = d * float(int(code) - 1);
 }
+
+// BF16 matrix times fp16 activations: y[t][n] = sum_k W[n][k] * x[t][k]. One threadgroup per (row, token), 256 threads split over K.
+kernel void k_draft_bf16mm(device const ushort* W [[buffer(0)]], device const half* x [[buffer(1)]], device float* y [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& N [[buffer(4)]], constant uint& T [[buffer(5)]],
+                           uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup float part[8];
+    const uint row = tg.x, t = tg.y; if (row >= N || t >= T) return;
+    device const ushort* w = W + ulong(row) * K; device const half* xx = x + ulong(t) * K;
+    float acc = 0.0f;
+    for (uint k = tid; k < K; k += 256u) { const uint bits = (uint)w[k] << 16; acc += as_type<float>(bits) * float(xx[k]); }
+    acc = simd_sum(acc); if (lane == 0) part[sg] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) { float s = 0.0f; for (uint i = 0; i < 8; i++) s += part[i]; y[ulong(t) * N + row] = s; }
+}
