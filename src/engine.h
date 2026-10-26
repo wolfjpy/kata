@@ -41,7 +41,8 @@ public:
     // ---- MTP head (blk.64, Q8_0)
     bool hasMtp = false;
     bool saveHidden = false;   // step(): also produce the plain output-normalised hidden state (hidden())
-    const float* hidden() const { return (const float*)bufH->contents(); }
+    // the plain output-normalised hidden of the last fed position (bufH stores fp16), converted on read
+    const float* hidden() const { const _Float16* h = (const _Float16*)bufH->contents(); float* o = (float*)hConv->contents(); for (int i = 0; i < 5120; i++) o[i] = (float)h[i]; return o; }
     // Runs R (<= 2) MTP rows: row r pairs hidden state hin[r] with token toks[r] at position pos0 + r. Returns the greedy token predicted after the last row (logits in logits()).
     int mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits = true);
     // the chained draft's input for the next step: output_norm of the MTP block's own residual (same convention as the trunk's h)
@@ -124,6 +125,7 @@ private:
     MTL::Buffer *hPrevF16 = nullptr;
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pQh, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
     static constexpr size_t kHiddenBytes = 5120 * 4;
+    MTL::Buffer *hConv = nullptr;
     MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
     MTL::Buffer *vTok = nullptr, *vQkv = nullptr, *vRec = nullptr; int vBase = 0;   // snapshots of the verify window (snap[0] = the input state) and the window's tokens
     // per-layer replay records of a verify window: conv (T x 10240), qk (T x 4096) and gates (T x 96)

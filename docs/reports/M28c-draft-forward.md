@@ -226,3 +226,22 @@ step s (s = 0: catch-up 行; s >= 1: 一行, 位置 r0 = n_lead-1+s):
 所以问题在链式循环的**状态/提交记账**(它也解释了为什么提交序列是错的)。这条路径已从 CLI 撤下(`--mtp-chain` 移除),代码与本节记录保留,供下一轮定位;默认仍是深度 1。
 
 **结论**:用户要求的第 1 条(推广 ALU 验证 + MTP 链 + 自适应深度)里,**ALU 验证基础设施完成并验证通过**(T=2/4/8 三条路径、9 种形状扫描),但**链式草稿有记账 bug 未解决**,因此没有采用。要拿到推理文本的 +10~20%,下一步应查链式循环的 `commitWide`/`encMtpKv`/`nextTok` 记账(而不是草稿本身)。
+
+## 16. 链式记账排查(用户要求的下一项)
+
+**这一轮修掉的三个真 bug**(都不是"记账"之外的猜测):
+
+1. **`bufH` 是 fp16,却被当 float 读**:`Engine::hidden()` 直接 `(const float*)bufH->contents()`,以及 `feed()` 的逐步路径 `memcpy(hid, bufH->contents(), kHiddenBytes)`。短后缀(≤24 token)时 hPrev 因此是垃圾。已加 fp16→float 转换(`hConv` 缓冲)。
+2. **链式循环把 anchor 重复 emit 一次** → 输出里出现重复 token,"160 token"里含 64 个重复。
+3. **链式下一步的 h 用错 norm**:应为 `nextn.shared_head_norm`(llama.cpp 的 `h_nextn`),不是主干的 `output_norm`。
+
+**排查过程中的关键数据**(强制深度):
+
+| | 每轮 | 每轮 token | 接受率 | tok/s |
+|---|---|---|---|---|
+| 深度 1(链式管线) | 72 ms | 2.00 | 100% | 28.8 |
+| 深度 3(链式管线) | 113 ms | 1.51 | 50.6% | 12.5 |
+
+深度 3 的 **p1 = 0.47**(第一份草稿的接受率),而深度 1 是 1.00 —— 而第一份草稿在两条路径里是**同一次调用**。已用打印确认 h 的传递是正常的(`sum|h| ≈ 4479`,数值合理),所以 p1 的差异**不能用 h 解释**;`verifyWide` 的 T=4 行 0 也已用"互不相同的假草稿"验证过是逐 token 正确的。因此差异只能出在 `specGenerateChain` 与 `specGenerate` 对**同一窗口**的不同处理上,本轮未能定位到具体一行。
+
+**结论**:第 1 条(ALU 验证 + MTP 链 + 自适应深度)中,ALU 验证基础设施完成且验证通过;链式草稿的三个 bug 已修但**仍有未定位的问题**,所以默认保持深度 1(散文 25.4、推理 28.8–29.3 tok/s),链式仅 `BONSAI_CHAIN=1` 可开。下一个嫌疑点:`specGenerateChain` 里 `fastDepth1` 与 `verifyWide` 两条分支对 `am[]`/`verifyLogits()` 的读取差异(前者读 `bufLogits`,后者读 `bufLogitsAll`)。

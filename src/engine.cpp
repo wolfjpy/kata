@@ -321,7 +321,7 @@ void Engine::loadMtp() {
     if (!has("blk.64.nextn.eh_proj.weight")) { hasMtp = false; return; }
     hasMtp = true; auto T = [&](const char* n) { return gg.tensor(n).fileOffset; };
     gdnSet[0] = gdnState; convSet[0] = convState; for (int i = 1; i < 3; i++) { gdnSet[i] = gpu.alloc(gdnState->length()); convSet[i] = gpu.alloc(convState->length()); }
-    pHid = gpu.alloc((size_t)(kMaxChunk + 1) * kHiddenBytes); hPrevBuf = gpu.alloc(kHiddenBytes);
+    pHid = gpu.alloc((size_t)(kMaxChunk + 1) * kHiddenBytes); hPrevBuf = gpu.alloc(kHiddenBytes); hConv = gpu.alloc(kHiddenBytes);
     mtp.ehProj = T("blk.64.nextn.eh_proj.weight"); mtp.enorm = T("blk.64.nextn.enorm.weight"); mtp.hnorm = T("blk.64.nextn.hnorm.weight"); mtp.headNorm = T("blk.64.nextn.shared_head_norm.weight");
     mtp.attnNorm = T("blk.64.attn_norm.weight"); mtp.postNorm = T("blk.64.post_attention_norm.weight"); mtp.wq = T("blk.64.attn_q.weight"); mtp.wk = T("blk.64.attn_k.weight"); mtp.wv = T("blk.64.attn_v.weight");
     mtp.wo = T("blk.64.attn_output.weight"); mtp.qNorm = T("blk.64.attn_q_norm.weight"); mtp.kNorm = T("blk.64.attn_k_norm.weight"); mtp.ffnGate = T("blk.64.ffn_gate.weight"); mtp.ffnUp = T("blk.64.ffn_up.weight"); mtp.ffnDown = T("blk.64.ffn_down.weight");
@@ -405,7 +405,7 @@ int Engine::feed(const int* toks, uint32_t n, uint32_t pos0, bool wantLogits) {
         if (trk) memcpy(hid, hPrevBuf->contents(), kHiddenBytes);
         for (uint32_t i = 0; i < n; i++) {
             last = step(toks[i], pos0 + i, -1, wantLogits && i + 1 == n);
-            if (trk) memcpy(hid + (size_t)(i + 1) * 5120, bufH->contents(), kHiddenBytes);
+            if (trk) { const _Float16* hb = (const _Float16*)bufH->contents(); for (int q = 0; q < 5120; q++) hid[(size_t)(i + 1) * 5120 + q] = (float)hb[q]; }
         }
         saveHidden = oldSave;
         if (trk) {

@@ -57,7 +57,7 @@ struct Session {
 }
 
 int cmdRun(int argc, char** argv, bool interactive) {
-    std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = false, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
+    std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("BONSAI_CHAIN") != nullptr, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
     CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
@@ -79,7 +79,9 @@ int cmdRun(int argc, char** argv, bool interactive) {
         (void)first; unfed = -1;
         if (spec) {   // MTP speculative decoding (exact: the output distribution is unchanged)
             auto t0 = std::chrono::steady_clock::now(); size_t before = gen.size();
-            SpecResult r = specGenerate(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, [&](int t) {
+            auto emitFn = [&](int t) { gen.push_back(t); if (S.tok.isEog(t)) return; std::string s = dt.push(t); if (!s.empty()) { fputs(s.c_str(), stdout); fflush(stdout); } };
+            SpecResult r = chain ? specGenerateChain(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, emitFn, &sst, true)
+                            : specGenerate(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, [&](int t) {
                 gen.push_back(t); if (S.tok.isEog(t)) return; std::string s = dt.push(t); if (!s.empty()) { fputs(s.c_str(), stdout); fflush(stdout); } }, &sst);
             S.pos = r.pos; unfed = r.unfed; nOut += (int)(gen.size() - before);
             decSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
