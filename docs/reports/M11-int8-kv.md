@@ -41,7 +41,7 @@
 ## 4. 已知限制
 
 - 7K 上下文以内没有速度收益(注意力那点时间被延迟而不是字节主导);只有内存收益。
-- 旧的标量注意力内核(`BONSAI_SCALAR_*`)只支持 fp16 KV,int8 模式下被忽略。
+- 旧的标量注意力内核(`KATA_SCALAR_*`)只支持 fp16 KV,int8 模式下被忽略。
 - 评测语料是论文/文档/规范的混合文本;需要更长(32K+)的真实对话/代码语料才能得出更窄的置信区间。
 
 ## Correction (M29e, re-measured properly)
@@ -51,13 +51,13 @@ because `kvInt8` decides the buffer allocation at load time, so running both pat
 layout change. Cross-process measurement instead:
 
 ```
-BONSAI_KV=fp16  bonsai kl-eval ... --save-ref ref.bin
-BONSAI_KV=int8  bonsai kl-eval ... --ref ref.bin
+KATA_KV=fp16  kata kl-eval ... --save-ref ref.bin
+KATA_KV=int8  kata kl-eval ... --ref ref.bin
 -> 2048 positions | mean KL 3.1e+01 | max KL 4.7e+04 | max |logit diff| 7.9e+06 | top-1 2038/2048 (99.51%)
 ```
 
 **The huge KL numbers are a metric artifact, not a broken kernel.** Running the per-position diagnostic
-(`BONSAI_KL_DBG=1`) shows every position with KL > 1 also has enormous *reference* logits:
+(`KATA_KL_DBG=1`) shows every position with KL > 1 also has enormous *reference* logits:
 
 | position | KL | reference top logit | int8 top logit |
 |---|---|---|---|
@@ -92,7 +92,7 @@ Until one of those lands, int8 KV stays opt-in and is not a default.
 
 Fix 1 above (asymmetric `k = sc*q + mean`, folded back into the attention as `+ mean * sum_d(q_d)`) was implemented for
 the key side in all three places (quantiser, prefill kernel, decode kernel; `kmean` buffer, per-row `qSum`, A/B switch
-`BONSAI_KV_ASYM`). It measures **worse**, reproducibly:
+`KATA_KV_ASYM`). It measures **worse**, reproducibly:
 
 | quantiser for K | top-1 (2048 positions) |
 |---|---|

@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <string>
 int main(int argc, char** argv) {
-    Gpu gpu; if (!gpu.init(argc > 1 ? argv[1] : "build/bonsai.metallib")) return 1;
+    Gpu gpu; if (!gpu.init(argc > 1 ? argv[1] : "build/kata.metallib")) return 1;
     const uint32_t threads = 12 * 1024 * 16, iters = 4096; MTL::Buffer* out = gpu.alloc(threads * 16);
     struct T { const char* k; double opsPerIter; const char* what; };
     T tests[] = { {"k_alu_f32", 8, "fp32 fma"}, {"k_alu_f16", 8, "fp16 fma (scalar half)"}, {"k_alu_h2", 16, "half2 fma (2 lanes/instr?)"}, {"k_alu_h4", 32, "half4 fma"}, {"k_alu_floor", 16, "fp32 mul-add + floor (2 ops)"}, {"k_alu_fract", 16, "fp32 mul-add + fract (2 ops)"}, {"k_alu_int", 16, "int32 mul-add"}, {"k_alu_i16", 16, "int16 mul-add"} };

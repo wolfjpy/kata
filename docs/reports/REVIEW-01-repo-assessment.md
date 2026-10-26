@@ -26,7 +26,7 @@
 | `shaders/*.metal` | 1 484 | 其中生产用 ~1 050 行;`gemv_exp`(299)、`layout_probe`(59)、`wide`(137)是实验/探针 |
 | `tools/*` | 336 | 参考运行时封装、6 个微基准、缓存回归脚本 |
 
-代码风格一致:MSL 与主机共享 `config/bonsai_m6.h` 的 constexpr;加载时用 GGUF 元数据校验;所有缓冲区在 `load()` 里一次性分配;没有动态分配;`make` 6 秒全量构建。
+代码风格一致:MSL 与主机共享 `config/kata_m6.h` 的 constexpr;加载时用 GGUF 元数据校验;所有缓冲区在 `load()` 里一次性分配;没有动态分配;`make` 6 秒全量构建。
 
 ### 1.2 文档(21 份,分三层)
 
@@ -58,7 +58,7 @@
 ### 2.2 技术债(代码层,按影响排序)
 
 1. **四条前向路径各自实现了一遍层循环**。`step` 与 `verify2` 是同一结构的两次拷贝(约 60 行 × 2),`prefill` 是第三个变体,`mtpRows` 是第四个。任何改动(比如 fp16 状态、ReplaySSM、新的注意力变体)都要改 3–4 处,改漏一处就是静默的数值不一致 —— 这正是本轮已经发生过一次的事故类型(`main.cpp` 只设了 `int8Mode` 没设掩码,导致三种模式实际都跑精确路径,测速和结论一度都是错的)。
-2. **模式选择散落在热路径里**:`getenv()`(`BONSAI_SCALAR_DEC`、`BONSAI_I8_MODE`、`BONSAI_OLD_EXPAND`、`BONSAI_DEC_CHUNK`、`BONSAI_GM`、`BONSAI_KV`)在每次编码时读一次(有 static 缓存,开销可忽略),但这些开关**不在 `numericsTag()` 里**,只有 int8 集合和 `+kv8` 进去了。换句话说:环境和代码之间有若干条能改变数值、但不会让缓存失效的路径。`BONSAI_SCALAR_*` 目前被 `!kvInt8` 挡住,但这是巧合,不是设计。
+2. **模式选择散落在热路径里**:`getenv()`(`KATA_SCALAR_DEC`、`KATA_I8_MODE`、`KATA_OLD_EXPAND`、`KATA_DEC_CHUNK`、`KATA_GM`、`KATA_KV`)在每次编码时读一次(有 static 缓存,开销可忽略),但这些开关**不在 `numericsTag()` 里**,只有 int8 集合和 `+kv8` 进去了。换句话说:环境和代码之间有若干条能改变数值、但不会让缓存失效的路径。`KATA_SCALAR_*` 目前被 `!kvInt8` 挡住,但这是巧合,不是设计。
 3. **`sk()` 用字符串比较做消融**:每 token 约 600 次调用,每次线性扫描 `vector<string>`。开销可忽略(~6 µs),但把一个只用于性能剖析的东西放进了生产编码路径,是污染。
 4. **没有可复现的数值基座**。`/tmp/ids72.txt`、`/tmp/golden72.bin`、`/tmp/ref128.bin` 都不在仓库里,session 里的 `/tmp` 一旦清空,所有"KL 1.4e-7 / top-1 72/72"的验收就无从重跑。仓库里唯一的自动化测试是 `tools/test_cache.sh`(11 项)。
 5. **`engine.cpp` 是 517 行单文件**,且 `prefill` 里混着编码、计划、日志。没有中间表示,也没有"一个层 = 一个函数"的边界。
@@ -174,7 +174,7 @@ MTP 周期:验证 58.4 ms(5.657 GB → **97 GB/s**,比解码的 112 低,因为 T
 
 ### ★ C. 常驻服务 + agent 接口(功能缺口,用户的主用途)
 
-- **做法**:`bonsai serve`:从 stdin/socket 读 JSONL 请求(`system`/`prompt`/`raw`/`max_tokens`/采样参数/`tools`),复用 Engine + PrefixCache,响应里带 timings;单线程排队(符合"单用户")。同一里程碑里补:Qwen3.8 的 tool-call 模板渲染 + 参数 JSON 解析、`stop` 串、上下文满时的滚动策略(丢最旧的非系统轮次并重建状态)。
+- **做法**:`kata serve`:从 stdin/socket 读 JSONL 请求(`system`/`prompt`/`raw`/`max_tokens`/采样参数/`tools`),复用 Engine + PrefixCache,响应里带 timings;单线程排队(符合"单用户")。同一里程碑里补:Qwen3.8 的 tool-call 模板渲染 + 参数 JSON 解析、`stop` 串、上下文满时的滚动策略(丢最旧的非系统轮次并重建状态)。
 - **预期**:agent 每步从 `3.3 s + prefill` 变成 `prefill`(缓存命中后 ~0.03 s);可用 `--raw` 以外的正规方式接工具。
 - **验收**:100 个连续请求无泄漏;同一请求串行 3 次,第 2、3 次的首包 ≤ 0.2 s;工具调用的 JSON 能正确往返(用官方模板的 3 个示例比对)。
 - **风险**:中(模板细节、状态滚动时的缓存失效)。
@@ -227,7 +227,7 @@ MTP 周期:验证 58.4 ms(5.657 GB → **97 GB/s**,比解码的 112 低,因为 T
 |---|---|---|
 | **M18** | 数值路径统一(`step` 用 fp16 激活)+ `encodeLayer` 重构 + `make test`(仓库内 golden、跨路径贪心一致性、缓存回归) | `make test` 全绿;跨路径一致性 20/20;速度不降 |
 | **M19** | 质量基座:任务级评测(算术/代码/续写),输出 4 种模式的一致率表 | 每个模式 ≥ 95%;差异逐条列出 |
-| **M20** | `bonsai serve`(JSONL)+ tool-call 模板 + stop 串 + 上下文滚动 | 100 请求无泄漏;热请求首包 ≤ 0.2 s;3 个工具示例往返正确 |
+| **M20** | `kata serve`(JSONL)+ tool-call 模板 + stop 串 + 上下文滚动 | 100 请求无泄漏;热请求首包 ≤ 0.2 s;3 个工具示例往返正确 |
 | **M21** | 层优先预填充(先做 chunk/GM 前置实验) | 8K 提示 ≥ +8%;输出逐位一致 |
 | **M22** | int8 GEMM in-situ 效率(①②;③ 视质量) | in-situ ≥ 26 TOPS;`--fast-ffn` ≥ +12% |
 | **M23** | 有损开关的组合规则 + 默认值决定(`--fast-ffn` 是否默认、组合是否禁止) | 组合矩阵表;默认值有任务级证据 |

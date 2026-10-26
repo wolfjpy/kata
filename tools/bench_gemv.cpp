@@ -10,7 +10,7 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    std::string model = argv[1], lib = argc > 2 ? argv[2] : "build/bonsai.metallib";
+    std::string model = argv[1], lib = argc > 2 ? argv[2] : "build/kata.metallib";
     Gguf gg; if (!gg.open(model.c_str())) return 1; Gpu gpu; if (!gpu.init(lib.c_str())) return 1;
     MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
     struct Shape { const char* tensor; const char* label; uint32_t K, N; int layers; };

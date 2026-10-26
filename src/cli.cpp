@@ -12,7 +12,7 @@ static std::string readFile(const char* p) { FILE* f = fopen(p, "rb"); if (!f) {
 int cmdTokenize(int argc, char** argv) {
     std::string model, text; bool haveText = false, noSpecial = false, show = false;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--text") { text = argv[++i]; haveText = true; } else if (a == "--file") { text = readFile(argv[++i]); haveText = true; } else if (a == "--no-special") noSpecial = true; else if (a == "--show") show = true; }
-    if (model.empty() || !haveText) { fprintf(stderr, "usage: bonsai tokenize --model M.gguf (--text T | --file F) [--no-special]\n"); return 1; }
+    if (model.empty() || !haveText) { fprintf(stderr, "usage: kata tokenize --model M.gguf (--text T | --file F) [--no-special]\n"); return 1; }
     Gguf gg; if (!gg.open(model.c_str())) return 1; Tokenizer tk; if (!tk.load(gg)) return 1;
     std::vector<int32_t> ids = tk.encode(text, !noSpecial);
     if (show) { for (size_t i = 0; i < ids.size(); i++) { std::string p = tk.piece(ids[i]); printf("%zu: %d \"", i, ids[i]); for (unsigned char c : p) { if (c == 10) printf("\\n"); else if (c == 13) printf("\\r"); else if (c == 9) printf("\\t"); else if (c < 32 || c >= 127) printf("\\x%02x", c); else putchar(c); } printf("\"\n"); } return 0; }
@@ -57,23 +57,23 @@ struct Session {
 }
 
 int cmdRun(int argc, char** argv, bool interactive) {
-    std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("BONSAI_CHAIN") != nullptr, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
+    std::string model, prompt, system, effort = "xhigh", metallib = "build/kata.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("KATA_CHAIN") != nullptr, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
     CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec; bool i8explicit = false;   // int8 FFN prefill is opt-in: it does not stack with the default int8 KV cache inside the quality gate
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
         if (a == "--model") model = nx(); else if (a == "--prompt") prompt = nx(); else if (a == "--file") { prompt = readFile(argv[++i]); haveFile = true; } else if (a == "--system") system = nx(); else if (a == "--raw") raw = true;
         else if (a == "--no-think") noThink = true; else if (a == "--effort") effort = nx(); else if (a == "--max-tokens") maxTokens = atoi(nx().c_str()); else if (a == "--ctx") ctx = (uint32_t)atoi(nx().c_str());
         else if (a == "--temp") sp.temp = (float)atof(nx().c_str()); else if (a == "--top-k") sp.topK = atoi(nx().c_str()); else if (a == "--top-p") sp.topP = (float)atof(nx().c_str()); else if (a == "--min-p") sp.minP = (float)atof(nx().c_str());
-        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") { i8spec = "all"; i8explicit = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8explicit = true; } else if (a == "--i8") { i8spec = nx(); i8explicit = true; } else if (a == "--exact") { i8spec.clear(); setenv("BONSAI_KV", "fp16", 1); } else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
+        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") { i8spec = "all"; i8explicit = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8explicit = true; } else if (a == "--i8") { i8spec = nx(); i8explicit = true; } else if (a == "--exact") { i8spec.clear(); setenv("KATA_KV", "fp16", 1); } else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("KATA_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
     }
-    if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: bonsai run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       bonsai chat --model M.gguf [same options]\n"); return 1; }
+    if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: kata run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       kata chat --model M.gguf [same options]\n"); return 1; }
     Session S; S.ctx = ctx; S.fast = !i8spec.empty();
     if (!S.eng.load(model, metallib, ctx, 0)) return 1; if (!S.eng.setI8(i8spec)) { fprintf(stderr, "--i8: unknown matrix name in \"%s\" (qkv z ssmout wq wk wv wo gate up down, all, ffn)\n", i8spec.c_str()); return 1; } const bool fast = S.eng.int8Mode; const bool spec = S.eng.hasMtp && !noSpec; S.eng.mtpTrack = spec;
     // the int8 KV cache is on by default (half the cache memory, +14% decode / +10% prefill at long context, top-1 99.71%);
     // the two int8 paths together measured 99.58% top-1, below the 99.7% gate, so the prefill stays exact unless asked for.
     // NOTE: the int8 KV cache is opt-in (--kv int8): the chunked prefill attention path measured mean KL 43.7 / max logit
     // diff 1.7e7 against fp16 KV, so it is not fit to be a default until that kernel is fixed.
-    if (i8explicit && std::string(getenv("BONSAI_KV")) == "int8") {
+    if (i8explicit && std::string(getenv("KATA_KV")) == "int8") {
         fprintf(stderr, "note: the int8 FFN prefill stacked on the int8 KV cache measured 99.58%% top-1 (gate 99.7%%); the prefill stays exact. Use --kv fp16 to combine them anyway.\n");
         i8spec.clear(); S.fast = false;
     }
@@ -95,13 +95,13 @@ int cmdRun(int argc, char** argv, bool interactive) {
             decSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             std::string rest = dt.flush(); if (!rest.empty()) fputs(rest.c_str(), stdout); fputc('\n', stdout); fflush(stdout); return;
         }
-        int tokenId = sampleToken(S.eng.logits(), (int)bonsai::kVocab, sp, rng);
+        int tokenId = sampleToken(S.eng.logits(), (int)kata::kVocab, sp, rng);
         for (int n = 0; n < maxTokens; n++) {
             if (S.tok.isEog(tokenId)) { gen.push_back(tokenId); unfed = tokenId; break; }
             gen.push_back(tokenId); std::string s = dt.push(tokenId); if (!s.empty()) { fputs(s.c_str(), stdout); fflush(stdout); }
             if (S.pos + 1 >= S.ctx) { fprintf(stderr, "\n[context full]\n"); unfed = tokenId; break; }
             auto t0 = std::chrono::steady_clock::now(); int fedTok = tokenId; S.eng.feed(&fedTok, 1, S.pos++, true); decSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); nOut++;
-            tokenId = sampleToken(S.eng.logits(), (int)bonsai::kVocab, sp, rng);
+            tokenId = sampleToken(S.eng.logits(), (int)kata::kVocab, sp, rng);
         }
         std::string rest = dt.flush(); if (!rest.empty()) fputs(rest.c_str(), stdout); fputc('\n', stdout); fflush(stdout);
     };
@@ -118,7 +118,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
     // interactive chat: keep the KV cache and the GDN state; each turn only prefills the new suffix
     std::thread warm([&]() { S.eng.warmup(); });   // hides the ~3 s cold start behind the time the user spends typing
     struct Joiner { std::thread& t; ~Joiner() { if (t.joinable()) t.join(); } } joiner{warm};
-    fprintf(stderr, "bonsai chat (%s). Empty line or /quit to exit, /reset to start over.\n", fast ? ("int8 prefill: " + S.eng.i8Names()).c_str() : "exact path");
+    fprintf(stderr, "kata chat (%s). Empty line or /quit to exit, /reset to start over.\n", fast ? ("int8 prefill: " + S.eng.i8Names()).c_str() : "exact path");
     bool firstTurn = true; std::string line;
     while (true) {
         fputs("\n> ", stdout); fflush(stdout); if (!std::getline(std::cin, line)) break; if (line == "/quit" || line.empty()) break;
@@ -140,9 +140,9 @@ int cmdRun(int argc, char** argv, bool interactive) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai mtp-eval: how often does the MTP head predict the main model's greedy continuation?
+// kata mtp-eval: how often does the MTP head predict the main model's greedy continuation?
 int cmdMtpEval(int argc, char** argv) {
-    std::string model, ids, metallib = "build/bonsai.metallib"; int gen = 96;
+    std::string model, ids, metallib = "build/kata.metallib"; int gen = 96;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
     std::vector<int> X; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); X.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
     Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; if (!eng.hasMtp) { fprintf(stderr, "model has no MTP block\n"); return 1; } eng.saveHidden = true;
@@ -161,12 +161,12 @@ int cmdMtpEval(int argc, char** argv) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai verify-check: logits of the 2-token verification pass versus the exact single-token decode path, over many positions.
+// kata verify-check: logits of the 2-token verification pass versus the exact single-token decode path, over many positions.
 int cmdVerifyCheck(int argc, char** argv) {
-    std::string model, ids, metallib = "build/bonsai.metallib";
+    std::string model, ids, metallib = "build/kata.metallib";
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; }
     std::vector<int> X; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); X.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
-    Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; const int V = (int)bonsai::kVocab;
+    Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; const int V = (int)kata::kVocab;
     double sumKl = 0, maxKl = 0, maxAbs = 0; size_t n = 0, agree = 0; double bSum[20] = {}, bMax[20] = {}; int bCnt[20] = {};
     auto cmp = [&](const float* ref, const float* got) {
         double mr = -1e30, mg = -1e30; int br = 0, bg = 0; for (int k = 0; k < V; k++) { if (ref[k] > mr) { mr = ref[k]; br = k; } if (got[k] > mg) { mg = got[k]; bg = k; } maxAbs = std::max(maxAbs, (double)std::fabs(ref[k] - got[k])); }
@@ -189,16 +189,16 @@ int cmdVerifyCheck(int argc, char** argv) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai kl-eval: quality of the int8 prefill path against the exact fp16 path on a text corpus. Both paths prefill the corpus chunk by chunk (each with its own state);
+// kata kl-eval: quality of the int8 prefill path against the exact fp16 path on a text corpus. Both paths prefill the corpus chunk by chunk (each with its own state);
 // at the last `keep` positions of every chunk the full-vocabulary distributions are compared (the first pass spills its logits to a temp file).
 int cmdKlEval(int argc, char** argv) {
-    std::string model, file, metallib = "build/bonsai.metallib", spill = "/tmp/bonsai_kl_spill.bin", saveRef, cmpRef, i8spec = "all"; bool i8given = false; int ntok = 16384, keep = 64, chunk = 1024;
+    std::string model, file, metallib = "build/kata.metallib", spill = "/tmp/kata_kl_spill.bin", saveRef, cmpRef, i8spec = "all"; bool i8given = false; int ntok = 16384, keep = 64, chunk = 1024;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--file") file = argv[++i]; else if (a == "--tokens") ntok = atoi(argv[++i]); else if (a == "--keep") keep = atoi(argv[++i]); else if (a == "--i8") { i8spec = argv[++i]; i8given = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8given = true; } else if (a == "--save-ref") saveRef = argv[++i]; else if (a == "--ref") cmpRef = argv[++i]; else if (a == "--chunk") chunk = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
-    if (model.empty() || file.empty()) { fprintf(stderr, "usage: bonsai kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n"); return 1; }
+    if (model.empty() || file.empty()) { fprintf(stderr, "usage: kata kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n"); return 1; }
     Engine eng; if (!eng.load(model, metallib, (uint32_t)ntok + 64, 0)) return 1; Tokenizer tok; if (!tok.load(eng.gg)) return 1;
     std::vector<int32_t> ids = tok.encode(readFile(file.c_str()), false); if ((int)ids.size() > ntok) ids.resize((size_t)ntok);
-    const int V = (int)bonsai::kVocab; const int n = (int)ids.size(); printf("corpus: %d tokens, chunk %d, comparing the last %d positions of each chunk\n", n, chunk, keep);
-    const bool single = !saveRef.empty() || !cmpRef.empty();   // --save-ref / --ref: one pass with the configuration of this process (e.g. BONSAI_KV=int8) instead of exact-vs-int8 in one process
+    const int V = (int)kata::kVocab; const int n = (int)ids.size(); printf("corpus: %d tokens, chunk %d, comparing the last %d positions of each chunk\n", n, chunk, keep);
+    const bool single = !saveRef.empty() || !cmpRef.empty();   // --save-ref / --ref: one pass with the configuration of this process (e.g. KATA_KV=int8) instead of exact-vs-int8 in one process
     FILE* sp = fopen(single ? (saveRef.empty() ? cmpRef.c_str() : saveRef.c_str()) : spill.c_str(), single && saveRef.empty() ? "rb" : "wb+"); if (!sp) { perror("spill"); return 1; }
     int gbase = 0;
     auto pass = [&](bool int8, auto&& onLogits) {
@@ -216,7 +216,7 @@ int cmdKlEval(int argc, char** argv) {
             double za = 0, zb = 0; for (int k = 0; k < V; k++) { za += std::exp((double)a[k] - ma); zb += std::exp((double)b[k] - mb); }
             const double la = std::log(za) + ma, lb = std::log(zb) + mb; double kl = 0, ad = 0;
             for (int k = 0; k < V; k++) { const double l = (double)a[k] - la, p = std::exp(l); if (p > 1e-12) kl += p * (l - ((double)b[k] - lb)); ad = std::max(ad, (double)std::fabs(a[k] - b[k])); }
-            if (getenv("BONSAI_KL_DBG") && kl > 1.0) fprintf(stderr, "  [bad] pos %d (row %d of chunk) KL %.3e logitmax ref %.4g / int8 %.4g\n", gbase + r, r, kl, ma, mb);
+            if (getenv("KATA_KL_DBG") && kl > 1.0) fprintf(stderr, "  [bad] pos %d (row %d of chunk) KL %.3e logitmax ref %.4g / int8 %.4g\n", gbase + r, r, kl, ma, mb);
             sumKl += kl; maxKl = std::max(maxKl, kl); sumAbs = std::max(sumAbs, ad); cnt++; agree += (ba == bb);
         }
         printf("\r  compared %zu positions, running mean KL %.3e, top-1 %.2f%%", cnt, sumKl / cnt, 100.0 * agree / cnt); fflush(stdout);
@@ -226,7 +226,7 @@ int cmdKlEval(int argc, char** argv) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai cache [--cache-dir D] [--clear]: list or delete the persistent prefix cache
+// kata cache [--cache-dir D] [--clear]: list or delete the persistent prefix cache
 int cmdCache(int argc, char** argv) {
     std::string dir; bool clr = false;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--cache-dir") dir = argv[++i]; else if (a == "--clear") clr = true; }
@@ -234,15 +234,15 @@ int cmdCache(int argc, char** argv) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai mtp-accept: offline estimate of the speculative acceptance rate in sampling mode. The model generates with the real sampler;
+// kata mtp-accept: offline estimate of the speculative acceptance rate in sampling mode. The model generates with the real sampler;
 // at every position the MTP head's distribution q and the target's distribution p (both after top-k/top-p/min-p/temperature) are compared:
 //   deterministic draft (argmax q):   acceptance = p(argmax q)
 //   sampled draft (d ~ q, accept with min(1, p/q), residual resampling on rejection):   acceptance = sum_v min(p(v), q(v))
 int cmdMtpAccept(int argc, char** argv) {
-    std::string model, metallib = "build/bonsai.metallib"; int gen = 200; SamplerParams sp; sp.seed = 7;
+    std::string model, metallib = "build/kata.metallib"; int gen = 200; SamplerParams sp; sp.seed = 7;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--temp") sp.temp = (float)atof(argv[++i]); else if (a == "--top-k") sp.topK = atoi(argv[++i]); else if (a == "--top-p") sp.topP = (float)atof(argv[++i]); else if (a == "--min-p") sp.minP = (float)atof(argv[++i]); else if (a == "--seed") sp.seed = (uint64_t)atoll(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
     Engine eng; if (!eng.load(model, metallib, 4096, 0)) return 1; if (!eng.hasMtp) { fprintf(stderr, "model has no MTP block\n"); return 1; } eng.mtpTrack = true; eng.saveHidden = true;
-    Tokenizer tok; if (!tok.load(eng.gg)) return 1; const int V = (int)bonsai::kVocab; std::mt19937_64 rng(sp.seed);
+    Tokenizer tok; if (!tok.load(eng.gg)) return 1; const int V = (int)kata::kVocab; std::mt19937_64 rng(sp.seed);
     struct Case { const char* name; const char* prompt; bool think; } cases[] = {
         {"prose (no thinking)", "Write a short story about a lighthouse keeper who discovers a message in a bottle.", false},
         {"code (no thinking)", "Write a Python function that returns all prime numbers below n using a sieve, then explain its complexity.", false},
@@ -270,18 +270,18 @@ int cmdMtpAccept(int argc, char** argv) {
 }
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// bonsai dflash-eval: measures the DFlash2 drafter's acceptance and the round cost, end to end (prompt and continuation both go through
+// kata dflash-eval: measures the DFlash2 drafter's acceptance and the round cost, end to end (prompt and continuation both go through
 // the wide verification path so the draft's context is materialised from the target's residuals).
 int cmdDflashEval(int argc, char** argv) {
-    std::string model, draftPath, ids, metallib = "build/bonsai.metallib"; int gen = 48;
+    std::string model, draftPath, ids, metallib = "build/kata.metallib"; int gen = 48;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--draft") draftPath = argv[++i];
         else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
     std::vector<int> X; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); X.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
-    if (model.empty() || draftPath.empty() || X.empty()) { fprintf(stderr, "usage: bonsai dflash-eval --model M --draft D.gguf --ids 1,2,3 [--gen N]\n"); return 1; }
+    if (model.empty() || draftPath.empty() || X.empty()) { fprintf(stderr, "usage: kata dflash-eval --model M --draft D.gguf --ids 1,2,3 [--gen N]\n"); return 1; }
     Engine eng; if (!eng.load(model, metallib, 8192, 0)) return 1;
     Draft dr; if (!dr.load(eng, draftPath)) return 1; eng.mtpTrack = false;
-    if (getenv("BONSAI_TAP_SHIFT")) { const int sh = atoi(getenv("BONSAI_TAP_SHIFT")); for (int i = 0; i < 5; i++) dr.targetLayers[i] += sh; }
-    const int V = (int)bonsai::kVocab, T = (int)Draft::kBlock;
+    if (getenv("KATA_TAP_SHIFT")) { const int sh = atoi(getenv("KATA_TAP_SHIFT")); for (int i = 0; i < 5; i++) dr.targetLayers[i] += sh; }
+    const int V = (int)kata::kVocab, T = (int)Draft::kBlock;
     MTL::Buffer* taps = eng.gpu.alloc(5 * 8 * 5120 * 2); MTL::Buffer* logits = eng.bufLogitsAllPublic();
     int am[8]; uint32_t pos = 0; int anchor = -1;
     auto argmaxOf = [&](int row) { const float* lg = (const float*)logits->contents() + (size_t)row * V; int b = 0; for (int k = 1; k < V; k++) if (lg[k] > lg[b]) b = k; return b; };
@@ -290,9 +290,9 @@ int cmdDflashEval(int argc, char** argv) {
         const uint32_t n = std::min<uint32_t>(T, (uint32_t)X.size() - pos);
         eng.verifyWide(X.data() + pos, n, pos, am, taps, dr.targetLayers, 5);
         eng.commitWide(n);
-        if (getenv("BONSAI_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
-        else if (!getenv("BONSAI_NO_CTX")) { dr.materialise(eng, taps->contents(), n);
-            if (getenv("BONSAI_DBG_CTX")) { const _Float16* tp = (const _Float16*)taps->contents(); double st = 0; int nt = 0;
+        if (getenv("KATA_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
+        else if (!getenv("KATA_NO_CTX")) { dr.materialise(eng, taps->contents(), n);
+            if (getenv("KATA_DBG_CTX")) { const _Float16* tp = (const _Float16*)taps->contents(); double st = 0; int nt = 0;
                 for (int i = 0; i < 5 * (int)n * 5120; i++) { double v = std::fabs((double)tp[i]); st += v; if (v != 0) nt++; }
                 const _Float16* ch = (const _Float16*)dr.cH->contents(); double sc2 = 0; int nc = 0;
                 for (int i = 0; i < (int)n * 5120; i++) { double v = std::fabs((double)ch[i]); sc2 += v; if (v != 0) nc++; }
@@ -305,11 +305,11 @@ int cmdDflashEval(int argc, char** argv) {
     printf("prompt %zu tokens via 8-row windows in %.2f s; anchor %d at pos %u\n", X.size(), promptSec, anchor, pos);
     uint64_t rounds = 0, accepted = 0, produced = 0; double roundSec = 0, draftSec = 0;
     int d[8];
-    if (getenv("BONSAI_DF_TRUTH")) {   // diagnostic: run the block with the true continuation in rows 1..7 instead of masks
+    if (getenv("KATA_DF_TRUTH")) {   // diagnostic: run the block with the true continuation in rows 1..7 instead of masks
         std::vector<int> truth; int a = anchor; uint32_t p2 = pos;
         for (int i = 0; i < T; i++) { truth.push_back(a); a = eng.step(a, p2, -1, true); p2++; }
         int amT[8]; eng.resetState();
-        for (uint32_t q2 = 0; q2 < pos; ) { const uint32_t n2 = std::min<uint32_t>(T, pos - q2); eng.verifyWide(X.data() + q2, n2, q2, amT, taps, dr.targetLayers, 5); eng.commitWide(n2); if (!getenv("BONSAI_NO_CTX")) dr.materialise(eng, taps->contents(), n2); q2 += n2; }
+        for (uint32_t q2 = 0; q2 < pos; ) { const uint32_t n2 = std::min<uint32_t>(T, pos - q2); eng.verifyWide(X.data() + q2, n2, q2, amT, taps, dr.targetLayers, 5); eng.commitWide(n2); if (!getenv("KATA_NO_CTX")) dr.materialise(eng, taps->contents(), n2); q2 += n2; }
         int tk[8]; for (int i = 0; i < T; i++) tk[i] = truth[(size_t)i];
         eng.xEmbedBlock(tk, (uint32_t)T);
         fprintf(stderr, "[truth] block inputs:"); for (int i = 0; i < T; i++) fprintf(stderr, " %d", tk[i]); fprintf(stderr, "\n");
@@ -330,21 +330,21 @@ int cmdDflashEval(int argc, char** argv) {
             fprintf(stderr, "[draft] row0 top5:"); for (int t5 = 0; t5 < 5; t5++) fprintf(stderr, " %d(%.2f)", top5[t5], lg[top5[t5]]); fprintf(stderr, " | anchor %d logit %.2f | row1 top1 %d\n", anchor, lg[anchor], argmaxOf(1));
             fprintf(stderr, "[draft] row0 argmax %d (%s anchor %d, rank %d), sum|.|=%.1f nonzero=%d; row1 argmax %d\n",
                     argmaxOf(0), argmaxOf(0) == anchor ? "==" : "!=", anchor, rank, sa, nz, argmaxOf(1)); }
-        if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double s0 = 0; int nz = 0;
+        if (rounds == 0 && getenv("KATA_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double s0 = 0; int nz = 0;
             for (int k = 0; k < V; k++) { s0 += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
             fprintf(stderr, "[draft] row0 logits: %.4f %.4f %.4f ... sum|.| %.1f nonzero %d, argmax %d; row1 argmax %d\n", lg[0], lg[1], lg[2], s0, nz, argmaxOf(0), argmaxOf(1)); }
-        if (getenv("BONSAI_DF_ARGMAX")) { for (int i = 0; i < T - 1; i++) d[i] = argmaxOf(i + 1); } else dr.propose(eng, logits, (uint32_t)T, d, anchor);
+        if (getenv("KATA_DF_ARGMAX")) { for (int i = 0; i < T - 1; i++) d[i] = argmaxOf(i + 1); } else dr.propose(eng, logits, (uint32_t)T, d, anchor);
         int win[8]; win[0] = anchor; for (int i = 0; i < T - 1; i++) win[i + 1] = d[i];
         auto r0 = std::chrono::steady_clock::now();
         eng.verifyWide(win, (uint32_t)T, pos, am, taps, dr.targetLayers, 5);
         int match = 0; while (match < T - 1 && d[match] == am[match]) match++;
         const uint32_t F = (uint32_t)match + 1;                          // the anchor is confirmed
         eng.commitWide(F);
-        if (getenv("BONSAI_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
-        else if (!getenv("BONSAI_NO_CTX")) dr.materialise(eng, taps->contents(), F);
+        if (getenv("KATA_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
+        else if (!getenv("KATA_NO_CTX")) dr.materialise(eng, taps->contents(), F);
         roundSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - r0).count();
         accepted += (uint64_t)match; produced += F; g += (int)F; pos += F; anchor = am[F - 1];
-        if (rounds < 3 || getenv("BONSAI_DBG_DRAFT")) { printf("  round %llu: drafts", (unsigned long long)rounds); for (int i = 0; i < T - 1; i++) printf(" %d", d[i]); printf("\n            trunk  "); for (int i = 0; i < T - 1; i++) printf(" %d", am[i]); printf("\n            accept %d -> %u tokens\n", match, F); }
+        if (rounds < 3 || getenv("KATA_DBG_DRAFT")) { printf("  round %llu: drafts", (unsigned long long)rounds); for (int i = 0; i < T - 1; i++) printf(" %d", d[i]); printf("\n            trunk  "); for (int i = 0; i < T - 1; i++) printf(" %d", am[i]); printf("\n            accept %d -> %u tokens\n", match, F); }
     }
     printf("DFlash2: %llu rounds, %llu tokens, %.2f tokens/round, %.1f%% drafts accepted, %.1f ms/round, %.1f tok/s\n",
            (unsigned long long)rounds, (unsigned long long)produced, (double)produced / rounds, 100.0 * accepted / (rounds * (T - 1)), 1e3 * roundSec / rounds,

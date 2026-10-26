@@ -45,4 +45,4 @@
 
 ## 6. 随带产物
 
-`shaders/wide.metal`(两种宽内核,实验性,引擎不使用)、`tools/bench_wide.cpp`(闸门基准,`make build/bench_wide`;命令:`build/bench_wide $M build/bonsai.metallib k_gemv_lut2_nr4_sg4 k_wide_q8_m8_r16_g4 ...`)。R=32/64 的 int8 变体速度相近但结果不对(没有追查原因),报告中不使用。
+`shaders/wide.metal`(两种宽内核,实验性,引擎不使用)、`tools/bench_wide.cpp`(闸门基准,`make build/bench_wide`;命令:`build/bench_wide $M build/kata.metallib k_gemv_lut2_nr4_sg4 k_wide_q8_m8_r16_g4 ...`)。R=32/64 的 int8 变体速度相近但结果不对(没有追查原因),报告中不使用。

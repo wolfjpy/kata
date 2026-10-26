@@ -4,7 +4,7 @@
 
 ## 1. 现状
 
-项目 `bonsai-m6`:只用 Metal 的 Ternary Bonsai 2 27B(Qwen3.8-27B,`qwen35` 架构,PTQ1_0 Hadamard 折叠三值权重 + MTP 层)推理引擎,C++17 + MSL,目标机器 Mac mini M6 / 16 GB。零拷贝映射 GGUF,没有 Python。
+项目 `kata-m6`:只用 Metal 的 Ternary Bonsai-2-27B(Qwen3.8-27B,`qwen35` 架构,PTQ1_0 Hadamard 折叠三值权重 + MTP 层)推理引擎,C++17 + MSL,目标机器 Mac mini M6 / 16 GB。零拷贝映射 GGUF,没有 Python。
 
 | 指标 | 本引擎 | 基线(Prism llama.cpp,同机器) |
 |---|---|---|
@@ -29,7 +29,7 @@ Git:`a6020e4`(M0)→ `4318bf0`(M2)→ `89af761`/`d97f58a`(M3)→ `fbf5ccb`(M5)�
 
 | 文件 | 作用 |
 |---|---|
-| `config/bonsai_m6.h` | 主机与 MSL 共用的常量(形状、分块);加载时与 GGUF 元数据对照 |
+| `config/kata_m6.h` | 主机与 MSL 共用的常量(形状、分块);加载时与 GGUF 元数据对照 |
 | `src/gguf.*` | GGUF 解析,整个文件 mmap |
 | `src/gpu.*` | Metal 设备/队列/管线缓存(metal-cpp;`*_PRIVATE_IMPLEMENTATION` 只在这里) |
 | `src/engine.*` | 前向:`step`(1 token 解码)、`prefill`(批量)、`verify2`(2 token 验证)、`mtpRows`(MTP 头)、`feed`(统一入口,维护 MTP 缓存)、`encMtpKv`、`dDecAttn` |
@@ -48,18 +48,18 @@ Git:`a6020e4`(M0)→ `4318bf0`(M2)→ `89af761`/`d97f58a`(M3)→ `fbf5ccb`(M5)�
 ## 3. 构建与复现
 
 ```sh
-make                                   # build/bonsai + build/bonsai.metallib
-M=../../models/bonsai-2-27b-mtp-ptq1_0.gguf
-build/bonsai run --model $M --prompt "..." --temp 0 --max-tokens 200         # MTP 默认开启;--no-spec 关闭
-build/bonsai --model $M --ids ... --prefill --repeat 2 [--int8]              # 预填充计时(第一次包含 ~2 s 冷启动)
-build/bonsai --model $M --ids ... --prefill --nlogits 72 --cmp-logits golden72.bin   # 对照保存的 fp32 logits
-build/bonsai --model $M --ids ... --prefill --verify 20 [--skip a,b]         # 2 token 验证的计时与消融
-build/bonsai verify-check --model $M --ids ...                               # 验证路径 vs 精确解码
-build/bonsai kl-eval --model $M --file corpus.txt --tokens 24576             # int8 vs 精确预填充
-build/bench_gemv2 $M build/bonsai.metallib k_gemv_lut2_nr4_sg4 ...           # GEMV 微基准
+make                                   # build/kata + build/kata.metallib
+M=../../models/Bonsai 2-mtp-ptq1_0.gguf
+build/kata run --model $M --prompt "..." --temp 0 --max-tokens 200         # MTP 默认开启;--no-spec 关闭
+build/kata --model $M --ids ... --prefill --repeat 2 [--int8]              # 预填充计时(第一次包含 ~2 s 冷启动)
+build/kata --model $M --ids ... --prefill --nlogits 72 --cmp-logits golden72.bin   # 对照保存的 fp32 logits
+build/kata --model $M --ids ... --prefill --verify 20 [--skip a,b]         # 2 token 验证的计时与消融
+build/kata verify-check --model $M --ids ...                               # 验证路径 vs 精确解码
+build/kata kl-eval --model $M --file corpus.txt --tokens 24576             # int8 vs 精确预填充
+build/bench_gemv2 $M build/kata.metallib k_gemv_lut2_nr4_sg4 ...           # GEMV 微基准
 ```
 
-环境变量(开发用):`BONSAI_SKIP=a,b`(CLI 运行时的算子消融)、`BONSAI_GM`(GEMM 分组大小,默认 32)、`BONSAI_SCALAR_ATTN=1` / `BONSAI_SCALAR_DEC=1`(旧的标量注意力,用于 A/B)、`BONSAI_DEC_CHUNK`(解码 split 的 key 数)、`BONSAI_OLD_EXPAND`、`BONSAI_VERIFY_V1H`、`BONSAI_I8_EXCLUDE=down,wo,…`(int8 路径中走精确 fp16 的矩阵)。
+环境变量(开发用):`KATA_SKIP=a,b`(CLI 运行时的算子消融)、`KATA_GM`(GEMM 分组大小,默认 32)、`KATA_SCALAR_ATTN=1` / `KATA_SCALAR_DEC=1`(旧的标量注意力,用于 A/B)、`KATA_DEC_CHUNK`(解码 split 的 key 数)、`KATA_OLD_EXPAND`、`KATA_VERIFY_V1H`、`KATA_I8_EXCLUDE=down,wo,…`(int8 路径中走精确 fp16 的矩阵)。
 测试用的 `/tmp/ids72.txt`、`/tmp/golden72.bin`、`/tmp/big1024.ids` 由 `build/ref_logits`(需要 Prism 参考运行时,见 `VERSIONS`)重新生成;它们不在仓库里。
 
 ## 4. 被实测推翻的假设和经验(每一条都有数据,见对应报告)
@@ -85,7 +85,7 @@ build/bench_gemv2 $M build/bonsai.metallib k_gemv_lut2_nr4_sg4 ...           # G
 |---|---|---|
 | 融合反量化的预填充 GEMM | 预填充 +10–14% | 展开仍占 0.56 s/1024 token;需要每个 M 块重复解码,大改 |
 | KV 压缩(fp8/int8) | 32K 上下文解码 +20–30% | 有损,需要质量门限 |
-| **权重重排为 16 字节对齐布局**(`bonsai-pack`,8 行 × 1024 K 一个 tile,14 条缓存行无填充) | 解码 +8–10%(读取探针上限 141 vs 127 GB/s);验证路径同理 | 需要打包工具 + 重写 GEMV/展开/embedding 内核;文件多 6.4 GB,仍可零拷贝 mmap |
+| **权重重排为 16 字节对齐布局**(`kata-pack`,8 行 × 1024 K 一个 tile,14 条缓存行无填充) | 解码 +8–10%(读取探针上限 141 vs 127 GB/s);验证路径同理 | 需要打包工具 + 重写 GEMV/展开/embedding 内核;文件多 6.4 GB,仍可零拷贝 mmap |
 | 验证 GEMV(T=2)从 113 → ~125 GB/s | MTP 周期 −5 ms(+8%) | LUT 读取仍是瓶颈;与上一行的重排可合并解决 |
 | **宽验证 + DFlash2 drafter**(见 `reports/M7-speculation-options.md`) | 代码/推理文本解码可能 2×+(实测接受长度 5.1);散文约持平 | 前提是新的宽验证内核(现有内核 T=8 要 3.2×;矩阵单元原型 16 token/矩阵 831 µs,慢 ~5×)+ 在 Metal 里实现 DFlash2 + Q4_K_M 解量化;多天、高风险 |
 | int8 KV(`half × char` 是原生支持的 matmul2d 类型,K 按 key 缩放 S 的列、V 按 key 缩放 P) | 32K 上下文解码 +8–10%,64K 上下文内存减半 | 有损但精度远好于 fp8;比 fp8 简单(不需要 MTLTensor) |

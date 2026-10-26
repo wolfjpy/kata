@@ -5,7 +5,7 @@
 ## 1. 现在能跑什么
 
 ```
-build/bonsai dflash-eval --model ../../models/bonsai-2-27b-mtp-ptq1_0.gguf \
+build/kata dflash-eval --model ../../models/Bonsai 2-mtp-ptq1_0.gguf \
   --draft ../../models/drafters/dflash2-q4km.gguf --ids "$(cat /tmp/ids72.txt)" --gen 24
 ```
 输出骨架(实测):
@@ -30,7 +30,7 @@ DFlash2: 24 rounds, 24 tokens, 1.00 tokens/round, 142.6 ms/round
 
 ## 3. 还没解决的(下一轮从这里开始)
 
-现象:草稿提案与主干不一致,接受 0/7。幅值剖面(`BONSAI_DBG_STAGE=1`)显示第一层内部量级合理(embed 0.003 → rms 0.37 → conv0 0.5 → attn 0.41 → wo 3.0 → ffn conv0 0.15 → gate 3.3 → swiglu 1.3),但 **`down` 的输出平均 57**(残差累计到 132/层,两层后 8.3M)。所以要么 `down` 的输入/权重对应关系仍有错,要么这个模型的激活量级本来就大、问题在别处。
+现象:草稿提案与主干不一致,接受 0/7。幅值剖面(`KATA_DBG_STAGE=1`)显示第一层内部量级合理(embed 0.003 → rms 0.37 → conv0 0.5 → attn 0.41 → wo 3.0 → ffn conv0 0.15 → gate 3.3 → swiglu 1.3),但 **`down` 的输出平均 57**(残差累计到 132/层,两层后 8.3M)。所以要么 `down` 的输入/权重对应关系仍有错,要么这个模型的激活量级本来就大、问题在别处。
 
 建议的定位顺序(每步都可验证):
 1. **先确认量级基准**:把主干的第 0 层残差量级打出来(在 `verifyWide` 里临时打印 `pX[c]` 的 sum|.|),与草稿的 5.4M 对比。如果主干也是同一量级,就说明问题不在量级而在"内容"(上下文 K/V、掩码、位置)。
@@ -47,15 +47,15 @@ DFlash2: 24 rounds, 24 tokens, 1.00 tokens/round, 142.6 ms/round
 
 ## 4. 调试钩子(保留在代码里,默认关闭)
 
-- `BONSAI_DBG_STAGE=1`:每层的关键缓冲 sum|.|/NaN 计数(会显著变慢,仅调试用)。
-- `BONSAI_DBG_DRAFT=1`:打印草稿提案与主干值、logits 量级。
+- `KATA_DBG_STAGE=1`:每层的关键缓冲 sum|.|/NaN 计数(会显著变慢,仅调试用)。
+- `KATA_DBG_DRAFT=1`:打印草稿提案与主干值、logits 量级。
 - `--vwidth T`:宽验证的"只接受第 0 行必须复现贪心"回归。
 
 ## 4.5 模型文件的选择(用户的更正)
 
-- `bonsai-2-27b-mtp-ptq1_0.gguf`(Ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`)= PrismML 的 PTQ1_0 + 额外一层 `blk.64.*`(q8_0,约 0.45 GB)的 MTP 头;**其余每个 key/张量与 PrismML 文件逐字节相同**。
+- `Bonsai 2-mtp-ptq1_0.gguf`(Ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`)= PrismML 的 PTQ1_0 + 额外一层 `blk.64.*`(q8_0,约 0.45 GB)的 MTP 头;**其余每个 key/张量与 PrismML 文件逐字节相同**。
 - **若用 DFlash2 当草稿,应当用源文件 `Ternary-Bonsai-2-27B-PTQ1_0.gguf`(prism-ml),不带 blk.64**:省 0.45 GB 常驻,且这正是 DFlash2 的配套组合。
-- 我们两个文件都测过:主干张量相同,所以 trunk 数值与 `--vwidth` 回归一致;DFlash2 的 tap 采集与草稿行为不受影响(这也交叉验证了"只多了 blk.64"的说法)。下载中的文件:`../../models/bonsai-2-27b-ptq1_0-src.gguf`。
+- 我们两个文件都测过:主干张量相同,所以 trunk 数值与 `--vwidth` 回归一致;DFlash2 的 tap 采集与草稿行为不受影响(这也交叉验证了"只多了 blk.64"的说法)。下载中的文件:`../../models/Bonsai 2-ptq1_0-src.gguf`。
 
 ## 5. 本轮的完整进展(追加)
 
@@ -125,19 +125,19 @@ row 0 自洽只证明"恒等路径"(embedding → 5 层 → 共享词表头)能�
 
 ```
 make build/dump_attn                     # 把第 0 层的嵌入/Q/ring/注意力输出/卷积输入输出 dump 到 /tmp
-build/dump_attn ../../models/bonsai-2-27b-ptq1_0-src.gguf ../../models/drafters/dflash2-q4km.gguf
-BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_t(commit 之后写文件)
+build/dump_attn ../../models/Bonsai 2-ptq1_0-src.gguf ../../models/drafters/dflash2-q4km.gguf
+KATA_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_t(commit 之后写文件)
 ```
 注意一个反复踩的坑:**诊断 dump 必须在 `waitUntilCompleted` 之后**(shared buffer 在编码阶段还没被 GPU 写),我曾两次因此读到旧数据、误判 `fc` 有错。
 
-## 11. 两个 Bonsai 专用草稿(用户提供的新文件)
+## 11. 两个 Kata 专用草稿(用户提供的新文件)
 
 | 文件 | 大小 | 量化类型 | 旋转基 | 需要什么 |
 |---|---|---|---|---|
-| `Cyronius/Qwen3.8-27B-DFlash2-Bonsai2-ternary` | 746 MB | **type 142(2-bit prism)×46**、F32×32、BF16×3 | **是**:自带 `prism.hadamard.sign_widths = [4096, 5120, 17408, 25600]`、`sign_mode = explicit`、`sign_values`、`weight_names`(逐个列出哪些矩阵是旋转的);`borrowed.signs_folded = output_norm, selector_hidden_cols` | 2-bit prism 解码 + 每个旋转矩阵输入做 FWHT(还多出 4096 与 25600 两个宽度,不在主干 GGUF 里) |
+| `Cyronius/Qwen3.8-27B-DFlash2-Kata2-ternary` | 746 MB | **type 142(2-bit prism)×46**、F32×32、BF16×3 | **是**:自带 `prism.hadamard.sign_widths = [4096, 5120, 17408, 25600]`、`sign_mode = explicit`、`sign_values`、`weight_names`(逐个列出哪些矩阵是旋转的);`borrowed.signs_folded = output_norm, selector_hidden_cols` | 2-bit prism 解码 + 每个旋转矩阵输入做 FWHT(还多出 4096 与 25600 两个宽度,不在主干 GGUF 里) |
 | `Schiltmans/Ternary-Bonsai-2-27B-DFlash2-ft5-Q2_K` | 623 MB | Q2_K×34、Q3_K×10、Q4_K×5 | **否**(无 prism 元数据,常规基) | Q2_K + Q3_K 解码(现有管线即可) |
 
-两者都是 `target_layers = [6,20,34,48,62]`(1 基边界),即 0 基块 **5/19/33/47/61**;`Cyronius` 的 `config.json` 明确写 `[5,19,33,47,61]`,与 ninfer 文档一致 → 我们的 `BONSAI_TAP_SHIFT=-1` 是正确设置。
+两者都是 `target_layers = [6,20,34,48,62]`(1 基边界),即 0 基块 **5/19/33/47/61**;`Cyronius` 的 `config.json` 明确写 `[5,19,33,47,61]`,与 ninfer 文档一致 → 我们的 `KATA_TAP_SHIFT=-1` 是正确设置。
 
 **代码改动**:`k_draft_mm` 的模板参数从 `bool Q6` 改为 `int QT`(0=Q4_K,1=Q6_K,2=Q2_K,3=Q3_K),按每个张量自己的 GGUF 类型选择解码器;GGUF 加载器识别 Q2_K(84 B/256)、Q3_K(110 B/256)、PQ2_0(type 142)。
 
@@ -159,7 +159,7 @@ BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_
 4. 条件走查:`score[c] = u[c] + Σ_r W_pred[P_prev, r] · g[r] · W_succ[C_c, r]`,第 1 个位置的前驱是 anchor(单行),之后用上一位置**选中的候选索引**作为前驱行 —— 与 ninfer 的
    `E_i[p,c] = u_i[c] + Σ_r W_pred[pred_token(i,p),r] g_i[r] W_succ[C_i[c],r]` 一致。
 
-`BONSAI_DF_ARGMAX=1` 保留为 A/B(DFlash1 风格)。实测:提案序列与 argmax 明显不同(例如 760 4087 369 264 …),但**接受率仍只有 0.6%**。
+`KATA_DF_ARGMAX=1` 保留为 A/B(DFlash1 风格)。实测:提案序列与 argmax 明显不同(例如 760 4087 369 264 …),但**接受率仍只有 0.6%**。
 
 **这意味着缺口不在"argmax 还是选择器"**:选择器把候选约束成一条连贯路径,但它仍建立在草稿的逐行分布之上;而草稿的逐行分布本身就不够准(row 0 自洽、row 1 之后偏离)。所以问题回到**结构假设**——最可能是 `fc` 的 tap 拼接顺序/层号,或者块的输入语义(anchor 的位置)。
 
@@ -167,14 +167,14 @@ BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_
 
 - 已修 **11** 个 bug:PQ2_0/旋转基、Q3_K 两处、delta 索引、RoPE 约定、tap 位置、tap 采集缺失、K 头分支、norm 权重绑定、Q6_K dtype、fp16→float 转换。
 - 逐算子验证全部通过(解码 vs ggml:Q4_K/Q6_K/Q2_K/PQ2_0;卷积、注意力、fc vs 独立 CPU 实现;row 0 自洽且尖锐 logit 9.95 vs 8.40)。
-- 端到端接受率 ~1%(应有 ~70%),两个 Bonsai 专用草稿都是如此。
+- 端到端接受率 ~1%(应有 ~70%),两个 Kata 专用草稿都是如此。
 - 结论:**剩下的误差是结构性的**,不是数值性的。若要继续,最有价值的是拿到一个 oracle:llama.cpp 在 `llama-speculative-simple --spec-type draft-dflash` 下对**同一提示**的逐位置草稿 token(目前没有日志钩子),或者官方转换脚本里 `target features` 的确切构造方式。
 
 ## 14. 推广 ALU 验证 + MTP 链 + 自适应深度(用户要求的第 1 条)
 
 **已完成的部分**:
 
-1. **ALU 验证路径**:`Engine::aluT`(0/2/4)让 `dWide` 在"矩阵单元宽内核"与"ALU LUT+half2 内核"之间切换;为此加了 `k_ilv2`/`k_ilv4` 两个纯 permute 内核(row-major fp16 → 交错 half2),**不改动已验证的 norm/FWHT 内核**。实测每轮:T=2 **85.9 ms**、T=4 **113.3 ms**、T=8(宽)146.6 ms,且 `--vwidth`+`BONSAI_ALU=4` 仍逐 token 复现贪心。
+1. **ALU 验证路径**:`Engine::aluT`(0/2/4)让 `dWide` 在"矩阵单元宽内核"与"ALU LUT+half2 内核"之间切换;为此加了 `k_ilv2`/`k_ilv4` 两个纯 permute 内核(row-major fp16 → 交错 half2),**不改动已验证的 norm/FWHT 内核**。实测每轮:T=2 **85.9 ms**、T=4 **113.3 ms**、T=8(宽)146.6 ms,且 `--vwidth`+`KATA_ALU=4` 仍逐 token 复现贪心。
 2. **MTP 链式草稿** `specGenerateChain`:每步把 MTP 块自己的输出当作下一步的 h,深度 1 走快速 `verify2`(67 ms),深度 3 走 ALU T=4(113 ms)。
 3. **自适应深度**:按"每毫秒期望 token 数"在线比较两档(Strata 的 DraftPolicy 简化版),初值用实测轮耗时。
 4. **修了一个正确性 bug**:链式路径最初用"草稿 == 主干 argmax"接受,这会破坏采样分布;改成精确规则(从 p 采样、命中才接受、否则用采样值)。
@@ -244,7 +244,7 @@ step s (s = 0: catch-up 行; s >= 1: 一行, 位置 r0 = n_lead-1+s):
 
 深度 3 的 **p1 = 0.47**(第一份草稿的接受率),而深度 1 是 1.00 —— 而第一份草稿在两条路径里是**同一次调用**。已用打印确认 h 的传递是正常的(`sum|h| ≈ 4479`,数值合理),所以 p1 的差异**不能用 h 解释**;`verifyWide` 的 T=4 行 0 也已用"互不相同的假草稿"验证过是逐 token 正确的。因此差异只能出在 `specGenerateChain` 与 `specGenerate` 对**同一窗口**的不同处理上,本轮未能定位到具体一行。
 
-**结论**:第 1 条(ALU 验证 + MTP 链 + 自适应深度)中,ALU 验证基础设施完成且验证通过;链式草稿的三个 bug 已修但**仍有未定位的问题**,所以默认保持深度 1(散文 25.4、推理 28.8–29.3 tok/s),链式仅 `BONSAI_CHAIN=1` 可开。下一个嫌疑点:`specGenerateChain` 里 `fastDepth1` 与 `verifyWide` 两条分支对 `am[]`/`verifyLogits()` 的读取差异(前者读 `bufLogits`,后者读 `bufLogitsAll`)。
+**结论**:第 1 条(ALU 验证 + MTP 链 + 自适应深度)中,ALU 验证基础设施完成且验证通过;链式草稿的三个 bug 已修但**仍有未定位的问题**,所以默认保持深度 1(散文 25.4、推理 28.8–29.3 tok/s),链式仅 `KATA_CHAIN=1` 可开。下一个嫌疑点:`specGenerateChain` 里 `fastDepth1` 与 `verifyWide` 两条分支对 `am[]`/`verifyLogits()` 的读取差异(前者读 `bufLogits`,后者读 `bufLogitsAll`)。
 
 ## 17. `--fast-ffn` 设为默认;宽验证 r 的天花板
 

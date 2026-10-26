@@ -1,7 +1,7 @@
 #include "gpu.h"
 #include <cstdio>
 int main() {
-    Gpu gpu; if (!gpu.init("build/bonsai.metallib")) return 1; const uint32_t maxCtx = 16384;
+    Gpu gpu; if (!gpu.init("build/kata.metallib")) return 1; const uint32_t maxCtx = 16384;
     MTL::Buffer* kc = gpu.alloc((size_t)maxCtx * 1024 * 2), *vc = gpu.alloc((size_t)maxCtx * 1024 * 2), *out = gpu.alloc(1024 * 4 * 32 * 4);
     for (uint32_t keys : {7280u, 16384u}) for (uint32_t contiguous : {0u, 1u}) for (uint32_t per : {64u, 128u, 256u}) {
         const uint32_t splits = (keys + per - 1) / per; uint32_t prm[4] = {per, maxCtx, contiguous, 0}; double best = 1e9;

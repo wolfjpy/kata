@@ -5,11 +5,11 @@
 
 ## 0. 恢复指南(先读这里)
 
-- 项目根:`<home>/super.engineering/projects/bonsai`。模型:`../../models/bonsai-2-27b-mtp-ptq1_0.gguf`。构建:`make`。
-- 参考仓库(在项目外,持久):`../../refs/Strata`(commit `4b9e05a`)、`../../refs/ninfer`(`64d10fb`)、`../../refs/llama.cpp-prism`(`b3ebc47`,另已额外编译 `llama-speculative-simple`)。drafter 权重:`../../models/drafters/`(`dflash2-q4km.gguf` 1.14 GB、`bonsai2-2b-ptq1.gguf` 0.43 GB)。
+- 项目根:`<repo root>`。模型:`../../models/Bonsai 2-mtp-ptq1_0.gguf`。构建:`make`。
+- 参考仓库(在项目外,持久):`../../refs/Strata`(commit `4b9e05a`)、`../../refs/ninfer`(`64d10fb`)、`../../refs/llama.cpp-prism`(`b3ebc47`,另已额外编译 `llama-speculative-simple`)。drafter 权重:`../../models/drafters/`(`dflash2-q4km.gguf` 1.14 GB、`kata2-2b-ptq1.gguf` 0.43 GB)。
 - 如果参考仓库不见了:`git clone https://github.com/Niko1221/Strata`、`https://github.com/Neroued/ninfer` 到 `../../refs/`。
 - 项目根里有一个未跟踪的文件 `1. **解码 GEMV 是 ALU 受限…(M4 §3)。T=.md`:是用户消息被保存下来的,不是我生成的,不要提交也不要删除。
-- 工作规则(用户要求):回复用中文;只提交自己生成的 `docs/ shaders/ src/ tools/ Makefile VERSIONS config/ third_party/ README.md`,**绝不提交用户放在根目录的 PDF/PNG/笔记**;提交信息用英文;每个里程碑独立提交并附报告;最新版本规则(每个阶段开始时重新核对上游版本并记入 `VERSIONS`);所有有损选项必须过质量门限(KL ≤ 1e-3 nat、top-1 ≥ 99.7%,≥20K token 语料,用 `bonsai kl-eval`)且默认关闭。
+- 工作规则(用户要求):回复用中文;只提交自己生成的 `docs/ shaders/ src/ tools/ Makefile VERSIONS config/ third_party/ README.md`,**绝不提交用户放在根目录的 PDF/PNG/笔记**;提交信息用英文;每个里程碑独立提交并附报告;最新版本规则(每个阶段开始时重新核对上游版本并记入 `VERSIONS`);所有有损选项必须过质量门限(KL ≤ 1e-3 nat、top-1 ≥ 99.7%,≥20K token 语料,用 `kata kl-eval`)且默认关闭。
 - 本文 §7 的路线图是当前的工作计划,§8 是已确认的决定。下一步从路线图里第一个未完成的里程碑开始。
 
 ## 1. 当前性能基线(M6,Mac mini,GPU 持续满载 1 分钟无降频)
@@ -70,9 +70,9 @@
 | MTP 深度 1 | 1.6(我们引擎) | — | 1.86 |
 | MTP 深度 3 | 1.87 | 3.2 | 3.13 |
 | DFlash2(Q4_K_M,7 个草稿) | 2.2 | 5.1 | 5.1 |
-| Bonsai-2 2B(普通草稿模型,4 个草稿) | 1.23 | 2.07 | — |
+| Kata-2 2B(普通草稿模型,4 个草稿) | 1.23 | 2.07 | — |
 
-(单位:每轮验证产出的 token 数。)与 ninfer 在 Qwen3.8 上的数据一致,说明 Bonsai 作为 DFlash2 目标模型迁移良好。
+(单位:每轮验证产出的 token 数。)与 ninfer 在 Qwen3.8 上的数据一致,说明 Kata 作为 DFlash2 目标模型迁移良好。
 
 ### 3.2 宽验证的代价(`tools/bench_gemv2`,ffn_gate 5120→17408,每矩阵)
 
@@ -136,7 +136,7 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 | **M9 ✅(2026-10-25,`reports/M9-prefix-cache.md`)** | **持久化前缀缓存**:在用户消息边界把 GDN 状态 + conv 状态 + KV(含 MTP 的 K/V)写到 SSD,按 token 前缀的哈希索引;新进程/新会话在长提示上复用;LRU + 磁盘预算 | 命中后恢复的 logits 与从头预填充逐位一致(或 KL ≤ 1e-6);20K token 提示的首包 ~80 s → ≤ 5 s | agent 场景首包提升 10×+ |
 | **M10 ⏸(2026-10-25,`reports/M10-sampling-aware-draft.md`:离线估计只 +5 个点,闸门未达到,实现推迟)** | **采样感知草稿**:温度>0 时从 MTP 自己的分布 q 采样草稿,验证用 `min(1,p/q)` + 残差重采样;先离线估计 Σ min(p,q) | 采样模式接受率 49% → ≥ 58%,输出分布不变(用大量采样的频率检验) | 采样模式约 +8% |
 | **M11 ✅(2026-10-25,`reports/M11-int8-kv.md`:KL 1.3e-4、top-1 99.71%;29K 上下文解码 +14%、预填充 +10%,内存减半;短上下文无速度收益,默认关)** | **int8 KV**(每 head-row 一个 scale;`half×char` 原生 matmul2d,K 缩放 S 的列、V 缩放 P) | 24K 语料 KL ≤ 1e-3、top-1 ≥ 99.7%;32K 解码 +8–10%;内存减半 | 长上下文解码、64K 内存 |
-| **M12 ⏹(2026-10-25,`reports/M12-weight-layout.md`:暂存宽读取原型没有提升,闸门未达到,不实现)** | **权重分平面重排**(`bonsai-pack` 工具生成 planar 文件,GEMV/展开/embedding 读 16 字节向量)| 数值逐位一致;普通解码 19.8 → ≥ 21.2 tok/s | 解码 +8–10% |
+| **M12 ⏹(2026-10-25,`reports/M12-weight-layout.md`:暂存宽读取原型没有提升,闸门未达到,不实现)** | **权重分平面重排**(`kata-pack` 工具生成 planar 文件,GEMV/展开/embedding 读 16 字节向量)| 数值逐位一致;普通解码 19.8 → ≥ 21.2 tok/s | 解码 +8–10% |
 | **M13 ✅(2026-10-25,`reports/M13-fast-ffn.md`:KL 7.5e-5、top-1 99.87%,预填充 +7–9.5%)** | **FFN gate+up 的 int8 预填充开关**(`--fast-ffn`,有损,默认关) | 24.5K 语料 top-1 ≥ 99.7%(已测 99.80%),预填充 +8–10% | 预填充 +8–10% |
 | **M14 ⚠️结论已推翻(2026-10-25,`reports/R2-dflash2-revisit.md`)** | **宽验证微基准闸门**:`matmul2d` 每 simdgroup 私有 tile,M=8,权重 LUT 解码进私有 TG tile;测 T=4/8 | **T=8 每矩阵 ≤ 1.5 × T=2(≈ 260 µs @ ffn_gate)才算通过**;否则停止 DFlash2,在报告里结案 | 闸门 |
 | **M15–M16 重新排入(见 `reports/R2-dflash2-revisit.md` 的 M25–M29)** | ReplaySSM 重放 + 宽验证接入引擎 + 采样兼容 | verify-check:KL ≤ 1e-5;T=4/8 验证周期 ≤ 1.5× T=2 | DFlash2 的前提 |
@@ -204,7 +204,7 @@ CPU 编码一个解码步 0.7 ms(1.3%);`MTLResourceHazardTrackingModeUntracked` 
 - agent / 聊天:相同的长系统提示第二次起恢复,首包从十几秒到约 1 s。
 
 ### 本轮的新增文件
-`src/ckpt.{h,cpp}`(前缀缓存)、`shaders/wide.metal`、`tools/{bench_wide,test_cache.sh}`、`reports/M9–M14,M17`;`kl-eval` 的 `--save-ref/--ref/--fast-ffn/--i8`;`bonsai cache`、`bonsai mtp-accept`;`--kv int8`、`--fast-ffn`、`--i8 list`、`--no-cache/--cache-dir/--cache-gb/--cache-min`。
+`src/ckpt.{h,cpp}`(前缀缓存)、`shaders/wide.metal`、`tools/{bench_wide,test_cache.sh}`、`reports/M9–M14,M17`;`kl-eval` 的 `--save-ref/--ref/--fast-ffn/--i8`;`kata cache`、`kata mtp-accept`;`--kv int8`、`--fast-ffn`、`--i8 list`、`--no-cache/--cache-dir/--cache-gb/--cache-min`。
 
 ### 仍然开放的方向(按预期收益)
 1. 解码的剩余时间:验证 GEMV 113 GB/s(~51 ms)和草稿(~6 ms)。M12 说明读取宽度不是限制;未试的是 T=1/T=2 的 LUT + half2 把 ALU 指令数减半(同时改读取和解码的重叠)。

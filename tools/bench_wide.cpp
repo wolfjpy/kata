@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 int main(int argc, char** argv) {
-    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init(argc > 2 ? argv[2] : "build/bonsai.metallib")) return 1; MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
+    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init(argc > 2 ? argv[2] : "build/kata.metallib")) return 1; MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
     struct Sh { const char* t; const char* label; uint32_t K, N; } shs[] = { {"blk.%d.ffn_gate.weight", "ffn_gate/up 5120->17408", 5120, 17408}, {"blk.%d.ffn_down.weight", "ffn_down 17408->5120", 17408, 5120}, {"blk.%d.attn_qkv.weight", "gdn_qkv 5120->10240", 5120, 10240} };
     std::vector<std::string> kernels; for (int i = 3; i < argc; i++) kernels.push_back(argv[i]);
     for (auto& sh : shs) {

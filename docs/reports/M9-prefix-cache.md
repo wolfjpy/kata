@@ -43,12 +43,12 @@
 | 选项 | 作用 |
 |---|---|
 | `--no-cache` | 关闭(基准测试时要用) |
-| `--cache-dir D` / `BONSAI_CACHE_DIR` | 目录,默认 `~/.cache/bonsai` |
+| `--cache-dir D` / `KATA_CACHE_DIR` | 目录,默认 `~/.cache/kata` |
 | `--cache-gb N` | 预算,默认 40 |
 | `--cache-min N` | 少于 N 个 token 的前缀不缓存,默认 2048 |
-| `bonsai cache [--clear]` | 列出或清空 |
+| `kata cache [--clear]` | 列出或清空 |
 
-**隐私**:检查点里有提示内容的 KV,可以被还原出大意;敏感提示请用 `--no-cache` 或事后 `bonsai cache --clear`。
+**隐私**:检查点里有提示内容的 KV,可以被还原出大意;敏感提示请用 `--no-cache` 或事后 `kata cache --clear`。
 
 ## 5. 已知限制和后续
 

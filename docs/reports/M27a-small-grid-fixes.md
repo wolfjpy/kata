@@ -45,7 +45,7 @@ M26 的 `k_gdn_rec_snap` 每轮写 8 份 147 MB 状态 = 1.2 GB(8.4 ms)+ 1.36 GB
 ## 4. 复现
 
 ```
-build/bonsai --model $M --ids "$(cat /tmp/ids72.txt)" --vwidth 8 --gen 16   # 每轮成本 + 逐 token 复现贪心
-BONSAI_KV=int8 build/bonsai ... --vwidth 8                                   # int8 KV 走 flash
-BONSAI_SKIP=v_ffn|v_gdn|v_ab|v_attn_only                                     # 分项消融
+build/kata --model $M --ids "$(cat /tmp/ids72.txt)" --vwidth 8 --gen 16   # 每轮成本 + 逐 token 复现贪心
+KATA_KV=int8 build/kata ... --vwidth 8                                   # int8 KV 走 flash
+KATA_SKIP=v_ffn|v_gdn|v_ab|v_attn_only                                     # 分项消融
 ```

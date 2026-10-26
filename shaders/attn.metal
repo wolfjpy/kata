@@ -9,7 +9,7 @@ kernel void k_attn_prep(device const float* qfull [[buffer(0)]], device const fl
                         uint h [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float xs[256]; threadgroup float part[8];
     if (h >= 28) {   // value head: copy to cache
-        uint vh = h - 28; vcache[ulong(pos - cacheOff) * bonsai::kKvDim + vh * 256 + tid] = half(vproj[vh * 256 + tid]);
+        uint vh = h - 28; vcache[ulong(pos - cacheOff) * kata::kKvDim + vh * 256 + tid] = half(vproj[vh * 256 + tid]);
         return;
     }
     float v; device const float* w;
@@ -19,20 +19,20 @@ kernel void k_attn_prep(device const float* qfull [[buffer(0)]], device const fl
     if (lane == 0) part[sg] = ss;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float tot = 0.0f; for (uint s = 0; s < 8; s++) tot += part[s];
-    xs[tid] = v * rsqrt(tot / 256.0f + bonsai::kRmsEps) * w[tid];
+    xs[tid] = v * rsqrt(tot / 256.0f + kata::kRmsEps) * w[tid];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float outv = xs[tid];
     if (tid < 32) {          // partial RoPE: pair (i, i+32)
-        float theta = float(pos) * pow(bonsai::kRopeTheta, -float(tid) / 32.0f);
+        float theta = float(pos) * pow(kata::kRopeTheta, -float(tid) / 32.0f);
         float c = cos(theta), s = sin(theta);
         float a = xs[tid], b = xs[tid + 32];
         outv = a * c - b * s;
         float outv2 = a * s + b * c;
-        if (h < 24) qout[h * 256 + tid + 32] = outv2; else kcache[ulong(pos - cacheOff) * bonsai::kKvDim + (h - 24) * 256 + tid + 32] = half(outv2);
+        if (h < 24) qout[h * 256 + tid + 32] = outv2; else kcache[ulong(pos - cacheOff) * kata::kKvDim + (h - 24) * 256 + tid + 32] = half(outv2);
     }
     if (tid >= 32 && tid < 64) { /* handled by the lower half above */ }
     else if (tid < 32 || tid >= 64) {
-        if (h < 24) qout[h * 256 + tid] = outv; else kcache[ulong(pos - cacheOff) * bonsai::kKvDim + (h - 24) * 256 + tid] = half(outv);
+        if (h < 24) qout[h * 256 + tid] = outv; else kcache[ulong(pos - cacheOff) * kata::kKvDim + (h - 24) * 256 + tid] = half(outv);
     }
 }
 
@@ -41,12 +41,12 @@ kernel void k_attn_decode(device const float* q [[buffer(0)]], device const floa
                           device float* out [[buffer(4)]], constant uint& pos [[buffer(5)]],
                           uint h [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float part[8];
-    const uint kvh = h / (bonsai::kHeads / bonsai::kKvHeads);
+    const uint kvh = h / (kata::kHeads / kata::kKvHeads);
     const float scale = 0.0625f;   // 1/sqrt(256)
     float qd = q[h * 256 + tid];
     float m = -INFINITY, l = 0.0f, acc = 0.0f;
     for (uint j = 0; j <= pos; j++) {
-        float kd = float(kcache[ulong(j) * bonsai::kKvDim + kvh * 256 + tid]);
+        float kd = float(kcache[ulong(j) * kata::kKvDim + kvh * 256 + tid]);
         float p = simd_sum(qd * kd);
         threadgroup_barrier(mem_flags::mem_threadgroup);
         if (lane == 0) part[sg] = p;
@@ -55,7 +55,7 @@ kernel void k_attn_decode(device const float* q [[buffer(0)]], device const floa
         s *= scale;
         float mn = max(m, s), a = exp(m - mn), e = exp(s - mn);
         l = l * a + e;
-        acc = acc * a + e * float(vcache[ulong(j) * bonsai::kKvDim + kvh * 256 + tid]);
+        acc = acc * a + e * float(vcache[ulong(j) * kata::kKvDim + kvh * 256 + tid]);
         m = mn;
     }
     out[h * 256 + tid] = (acc / l) * sigmoidf(gate[h * 256 + tid]);
@@ -76,8 +76,8 @@ kernel void k_attn_split(device const float* q [[buffer(0)]], device const half*
     float m[6], l[6], acc[6][8];
     for (uint h = 0; h < 6; h++) { m[h] = -INFINITY; l[h] = 0.0f; for (uint d = 0; d < 8; d++) acc[h][d] = 0.0f; }
     for (uint j = slo; j < shi; j++) {
-        device const half* kp = kcache + ulong(j) * bonsai::kKvDim + kvh * 256 + lane * 8;
-        device const half* vp = vcache + ulong(j) * bonsai::kKvDim + kvh * 256 + lane * 8;
+        device const half* kp = kcache + ulong(j) * kata::kKvDim + kvh * 256 + lane * 8;
+        device const half* vp = vcache + ulong(j) * kata::kKvDim + kvh * 256 + lane * 8;
         half4 k0 = *(device const half4*)kp, k1 = *(device const half4*)(kp + 4), v0 = *(device const half4*)vp, v1 = *(device const half4*)(vp + 4);
         float kf[8] = {float(k0.x), float(k0.y), float(k0.z), float(k0.w), float(k1.x), float(k1.y), float(k1.z), float(k1.w)};
         float vf[8] = {float(v0.x), float(v0.y), float(v0.z), float(v0.w), float(v1.x), float(v1.y), float(v1.z), float(v1.w)};

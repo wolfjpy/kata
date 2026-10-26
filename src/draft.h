@@ -14,7 +14,7 @@ struct Draft {
     static constexpr int32_t kMaskTok = 248070;
 
     Gguf gg; bool ok = false; uint32_t frontier = 0;
-    bool rotated = false;                                  // ternary drafters: weights live in Bonsai's Hadamard basis, so every matrix input is transformed
+    bool rotated = false;                                  // ternary drafters: weights live in Kata's Hadamard basis, so every matrix input is transformed
     MTL::Buffer *signs = nullptr, *ones = nullptr;          // concatenated sign vectors for widths 4096/5120/17408/25600, and a +1 vector for the folded output norm
     uint32_t signOff[4] = {0, 0, 0, 0};                    // element offsets of those widths inside `signs`
     uint32_t signOffFor(uint32_t W) const;

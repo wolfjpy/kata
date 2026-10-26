@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <vector>
 int main(int argc, char** argv) {
-    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/bonsai.metallib")) return 1; MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
+    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/kata.metallib")) return 1; MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
     struct Sh { const char* t; uint32_t K, N; } shs[] = { {"blk.%d.ffn_gate.weight", 5120, 17408}, {"blk.%d.ffn_down.weight", 17408, 5120}, {"blk.%d.attn_qkv.weight", 5120, 10240} };
     MTL::Buffer* out = gpu.alloc(1 << 22);
     for (auto& sh : shs) { std::vector<uint64_t> offs; for (int l = 0; l < 8; l++) { char nm[128]; snprintf(nm, sizeof nm, sh.t, l * 4); offs.push_back(gg.tensor(nm).fileOffset); }

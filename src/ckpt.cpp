@@ -10,7 +10,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-using namespace bonsai;
+using namespace kata;
 
 namespace {
 constexpr uint32_t kVersion = 2;
@@ -60,7 +60,7 @@ double nowSec() { return (double)time(nullptr); }
 }  // namespace
 
 std::string defaultCacheDir() {
-    std::string d; if (const char* e = getenv("BONSAI_CACHE_DIR")) d = e; else { const char* h = getenv("HOME"); d = std::string(h ? h : ".") + "/.cache/bonsai"; }
+    std::string d; if (const char* e = getenv("KATA_CACHE_DIR")) d = e; else { const char* h = getenv("HOME"); d = std::string(h ? h : ".") + "/.cache/kata"; }
     std::string cur; for (size_t i = 0; i <= d.size(); i++) { if (i == d.size() || d[i] == '/') { if (!cur.empty()) mkdir(cur.c_str(), 0755); } if (i < d.size()) cur += d[i]; }
     return d;
 }
@@ -155,7 +155,7 @@ uint32_t PrefixCache::clear() {
     closedir(d); return c;
 }
 
-// bonsai cache: list or clear a cache directory without loading a model
+// kata cache: list or clear a cache directory without loading a model
 int listCacheDir(const std::string& dir, bool clear) {
     auto es = scan(dir); uint64_t total = 0; for (auto& f : es) total += f.bytes;
     std::sort(es.begin(), es.end(), [](const Found& a, const Found& b) { return a.mtime > b.mtime; });

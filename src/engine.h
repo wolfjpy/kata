@@ -2,7 +2,7 @@
 #pragma once
 #include "gguf.h"
 #include "gpu.h"
-#include "bonsai_m6.h"
+#include "kata_m6.h"
 #include <string>
 #include <vector>
 #include <cstring>
@@ -27,7 +27,7 @@ public:
     uint32_t maxCtx = 0, dbgTokens = 0;
     std::vector<std::string> skip;   // profiling ablation: names of ops to leave out of the command stream (timing only; results are garbage)
     bool sk(const char* n) const { for (auto& s : skip) if (s == n) return true; return false; }
-    LayerW layers[bonsai::kLayers];
+    LayerW layers[kata::kLayers];
     uint64_t tokEmbd = 0, outNorm = 0, outW = 0;
 
     bool load(const std::string& model, const std::string& metallib, uint32_t maxCtx, uint32_t dbgTokens);
@@ -57,20 +57,20 @@ public:
     // Speculative verification: runs 2 tokens (positions pos, pos+1) through the main model in one pass. Both GDN states (after token 0 and after token 1) are kept; commit2() picks one.
     void verify2(const int* toks, uint32_t pos, int* argmaxOut);
     void commit2(bool acceptBoth);
-    const float* verifyLogits(int row) const { return (const float*)bufLogitsAll->contents() + (size_t)row * bonsai::kVocab; }
+    const float* verifyLogits(int row) const { return (const float*)bufLogitsAll->contents() + (size_t)row * kata::kVocab; }
     void verifyHidden(int row, float* dst) const;   // post-final-norm hidden state of verified token `row`
     // verification GEMV path: 0 = wide matrix-unit kernel (T <= 8), 2 or 4 = ALU LUT+half2 kernel for exactly that many token rows
     uint32_t aluT = 0;
-    uint32_t gemmGroup = getenv("BONSAI_GM") ? (uint32_t)atoi(getenv("BONSAI_GM")) : 32u;   // GEMM tile order: groups of g consecutive M tiles share a B strip (0 = N-fast, much slower)
+    uint32_t gemmGroup = getenv("KATA_GM") ? (uint32_t)atoi(getenv("KATA_GM")) : 32u;   // GEMM tile order: groups of g consecutive M tiles share a B strip (0 = N-fast, much slower)
     // ---- raw access to the persistent state for the prefix cache (src/ckpt.cpp)
     uint8_t* gdnPtr() const { return (uint8_t*)gdnState->contents(); }
     size_t gdnBytes() const { return gdnState->length(); }
     uint8_t* convPtr() const { return (uint8_t*)convState->contents(); }
     size_t convBytes() const { return convState->length(); }
     // KV planes of the main attention layers: fp16 -> {K, V}; int8 -> {K, V, K scales, V scales} (one fp16 scale per position and KV head)
-    bool kvInt8 = false;     // --kv int8 / BONSAI_KV=int8 (lossy; set before load)
+    bool kvInt8 = false;     // --kv int8 / KATA_KV=int8 (lossy; set before load)
     uint32_t kvPlanes() const { return kvInt8 ? 4u : 2u; }
-    size_t kvPlaneRow(uint32_t plane) const { return plane < 2 ? (size_t)bonsai::kKvDim * (kvInt8 ? 1 : 2) : (size_t)4 * 2; }
+    size_t kvPlaneRow(uint32_t plane) const { return plane < 2 ? (size_t)kata::kKvDim * (kvInt8 ? 1 : 2) : (size_t)4 * 2; }
     uint8_t* kvPlanePtr(uint32_t attnLayer, uint32_t plane) const {
         MTL::Buffer* b = plane == 0 ? kcache : plane == 1 ? vcache : plane == 2 ? kscale : vscale; return (uint8_t*)b->contents() + (size_t)attnLayer * maxCtx * kvPlaneRow(plane); }
     // (the single MTP layer keeps an fp16 cache in every mode)
@@ -91,12 +91,12 @@ public:
     static constexpr uint32_t kMaxVerify = 8;
     int verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut, MTL::Buffer* taps = nullptr, const int32_t* tapLayers = nullptr, uint32_t nTaps = 0);   // returns the greedy argmax of row T-1 (all T rows' logits stay in verifyLogits(row))
     void commitWide(uint32_t accept);                                            // keep the snapshot after `accept` tokens and make the MTP cache current
-    const _Float16* verifyHiddenRow(uint32_t row) const { return (const _Float16*)pHh->contents() + (size_t)row * bonsai::kHidden; }
+    const _Float16* verifyHiddenRow(uint32_t row) const { return (const _Float16*)pHh->contents() + (size_t)row * kata::kHidden; }
     // ---- thin wrappers the DFlash2 draft needs from the trunk (its embedding, its shared lm_head, its folded output norm)
     MTL::Buffer* weightsBuffer() const { return wbuf; }
     uint64_t offTokEmbd() const { return tokEmbd; }
     uint64_t offOutW() const { return outW; }
-    uint64_t offOutNormGs() const { return (uint64_t)(bonsai::kLayers * 2) * bonsai::kHidden * 4; }
+    uint64_t offOutNormGs() const { return (uint64_t)(kata::kLayers * 2) * kata::kHidden * 4; }
     MTL::Buffer* gsBuffer() const { return gsAll; }
     MTL::Buffer* bufLogitsAllPublic() const { return bufLogitsAll; }
     MTL::Buffer* sign5120() const { return sg5120; }
@@ -108,8 +108,8 @@ public:
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }
-    const float* dbgResidual(int layer, int slot) const { return (const float*)dbgRes->contents() + ((size_t)layer * dbgTokens + slot) * bonsai::kHidden; }
-    const float* dbgBlock(int layer, int slot) const { return (const float*)dbgBlk->contents() + ((size_t)layer * dbgTokens + slot) * bonsai::kHidden; }
+    const float* dbgResidual(int layer, int slot) const { return (const float*)dbgRes->contents() + ((size_t)layer * dbgTokens + slot) * kata::kHidden; }
+    const float* dbgBlock(int layer, int slot) const { return (const float*)dbgBlk->contents() + ((size_t)layer * dbgTokens + slot) * kata::kHidden; }
 
 private:
     MTL::Buffer *wbuf = nullptr;
@@ -138,7 +138,7 @@ private:
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
     void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0, MTL::Buffer* kmn = nullptr);
     MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
-    uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * bonsai::kKvDim * (kvInt8 ? 1u : 2u); }
+    uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * kata::kKvDim * (kvInt8 ? 1u : 2u); }
     uint64_t scLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * 4 * 2; }
     void dKvQuant(MTL::ComputeCommandEncoder* e, uint32_t T, uint32_t pos0, uint32_t ai);
     void loadMtp();

@@ -10,7 +10,7 @@ extern "C" void dequantize_row_q4_K(const void*, float*, long long);
 extern "C" void dequantize_row_q6_K(const void*, float*, long long);
 extern "C" void dequantize_row_pq2_0(const void*, float*, long long);
 int main(int argc, char** argv) {
-    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/bonsai.metallib")) return 1;
+    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/kata.metallib")) return 1;
     const char* names[] = {"blk.0.ffn_gate.weight", "blk.0.attn_q.weight", "fc.weight", "blk.0.attn_q.weight", "blk.0.attn_conv_proj.weight", "fc.weight",
                            "blk.2.ffn_down.weight", "blk.2.attn_v.weight", "blk.4.ffn_down.weight", "selector_hidden.weight"};
     double worst = 0; int bad = 0, n = 0;

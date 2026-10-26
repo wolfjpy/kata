@@ -6,11 +6,11 @@ kernel void k_gemv_ptq1(device const uchar* W [[buffer(0)]], device const float*
                         constant uint& K [[buffer(3)]], constant uint& N [[buffer(4)]],
                         uint tgid [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
     uint row = tgid * 8 + sg; if (row >= N) return;
-    uint nblk = K / bonsai::kGroup;
-    device const uchar* rp = W + ulong(row) * ulong(nblk) * bonsai::kBlockBytes;
+    uint nblk = K / kata::kGroup;
+    device const uchar* rp = W + ulong(row) * ulong(nblk) * kata::kBlockBytes;
     float acc = 0.0f;
     for (uint b = lane; b < nblk; b += 32) {
-        device const uchar* bp = rp + b * bonsai::kBlockBytes;
+        device const uchar* bp = rp + b * kata::kBlockBytes;
         float s = 0.0f;
         for (uint e = 0; e < 128; e++) s += float(ptq1_elem(bp, e)) * x[b * 128 + e];
         acc += ptq1_scale(bp) * s;

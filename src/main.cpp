@@ -1,4 +1,4 @@
-// bonsai: decode engine CLI (token-id interface with reference comparison).
+// kata: decode engine CLI (token-id interface with reference comparison).
 #include "engine.h"
 #include <algorithm>
 #include <chrono>
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::string(argv[1]) == "mtp-eval") return cmdMtpEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "run") return cmdRun(argc, argv, false);
     if (argc > 1 && std::string(argv[1]) == "chat") return cmdRun(argc, argv, true);
-    std::string model, metallib = "build/bonsai.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0, vwidth = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false; std::string i8spec;
+    std::string model, metallib = "build/kata.metallib", ids, refDir, refLogits, dumpLogits, cmpLogits, skipArg; int gen = 0, verifyN = 0, repeat = 1, nlogits = 0, vwidth = 0; uint32_t ctx = 2048; bool usePrefill = false, int8 = false; std::string i8spec;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--model") model = argv[++i]; else if (a == "--metallib") metallib = argv[++i]; else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--verify") verifyN = atoi(argv[++i]); else if (a == "--vwidth") vwidth = atoi(argv[++i]);
@@ -47,9 +47,9 @@ int main(int argc, char** argv) {
         else if (a == "--prefill") usePrefill = true; else if (a == "--repeat") repeat = atoi(argv[++i]); else if (a == "--int8") int8 = true; else if (a == "--i8") i8spec = argv[++i]; else if (a == "--nlogits") nlogits = atoi(argv[++i]);
         else if (a == "--dump-logits") dumpLogits = argv[++i]; else if (a == "--cmp-logits") cmpLogits = argv[++i];
     }
-    if (model.empty() || ids.empty()) { fprintf(stderr, "usage: bonsai --model M.gguf --ids 1,2,3 [--prefill] [--int8] [--nlogits N] [--gen N] [--ref-dir D] [--ref-logits F] [--dump-logits F] [--cmp-logits F] [--ctx N] [--skip a,b]\n"); return 1; }
+    if (model.empty() || ids.empty()) { fprintf(stderr, "usage: kata --model M.gguf --ids 1,2,3 [--prefill] [--int8] [--nlogits N] [--gen N] [--ref-dir D] [--ref-logits F] [--dump-logits F] [--cmp-logits F] [--ctx N] [--skip a,b]\n"); return 1; }
     std::vector<int> toks; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); toks.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
-    const size_t ntok = toks.size(), nv = bonsai::kVocab;
+    const size_t ntok = toks.size(), nv = kata::kVocab;
     const bool wantCompare = !refLogits.empty() || !dumpLogits.empty() || !cmpLogits.empty();
     const uint32_t nl = wantCompare ? (nlogits > 0 ? (uint32_t)std::min<size_t>(nlogits, std::min<size_t>(ntok, 128)) : (uint32_t)std::min<size_t>(ntok, 128)) : 1;   // positions we keep logits for: the last nl
     const uint32_t dbg = refDir.empty() ? 0 : (uint32_t)ntok;
@@ -76,16 +76,16 @@ int main(int argc, char** argv) {
     }
     if (!refDir.empty()) {
         printf("%-4s %-6s %-14s %-14s %-14s\n", "layer", "type", "block-out relL2", "residual relL2", "residual maxabs");
-        for (uint32_t il = 0; il < bonsai::kLayers; il++) {
-            const bool at = bonsai::layerIsAttention(il); char nm[64];
+        for (uint32_t il = 0; il < kata::kLayers; il++) {
+            const bool at = kata::layerIsAttention(il); char nm[64];
             snprintf(nm, sizeof nm, "%s/l_out-%u.f32", refDir.c_str(), il); std::vector<float> ref = readF32(nm);
             snprintf(nm, sizeof nm, at ? "%s/attn_output-%u.f32" : "%s/linear_attn_out-%u.f32", refDir.c_str(), il); std::vector<float> refB = readF32(nm);
             double worstR = 0, worstM = 0, worstB = 0;
             for (size_t t = 0; t < ntok; t++) {
                 const float* a = eng.dbgResidual(il, (int)t); double n2 = 0, d2 = 0, mx = 0;
-                for (uint32_t k = 0; k < bonsai::kHidden; k++) { double r = ref.empty() ? 0 : ref[t * bonsai::kHidden + k]; double dd = a[k] - r; n2 += r * r; d2 += dd * dd; mx = std::max(mx, std::fabs(dd)); }
+                for (uint32_t k = 0; k < kata::kHidden; k++) { double r = ref.empty() ? 0 : ref[t * kata::kHidden + k]; double dd = a[k] - r; n2 += r * r; d2 += dd * dd; mx = std::max(mx, std::fabs(dd)); }
                 worstR = std::max(worstR, std::sqrt(d2 / (n2 + 1e-30))); worstM = std::max(worstM, mx);
-                if (!refB.empty()) { const float* b = eng.dbgBlock(il, (int)t); double bn = 0, bd = 0; for (uint32_t k = 0; k < bonsai::kHidden; k++) { double r = refB[t * bonsai::kHidden + k]; double dd = b[k] - r; bn += r * r; bd += dd * dd; } worstB = std::max(worstB, std::sqrt(bd / (bn + 1e-30))); }
+                if (!refB.empty()) { const float* b = eng.dbgBlock(il, (int)t); double bn = 0, bd = 0; for (uint32_t k = 0; k < kata::kHidden; k++) { double r = refB[t * kata::kHidden + k]; double dd = b[k] - r; bn += r * r; bd += dd * dd; } worstB = std::max(worstB, std::sqrt(bd / (bn + 1e-30))); }
             }
             printf("%-4u %-6s %-14.3e %-14.3e %-14.3e\n", il, at ? "attn" : "gdn", worstB, worstR, worstM);
         }
@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < verifyN; i++) { eng.verify2(vt, (uint32_t)ntok, am); eng.commit2(false); }
         double vdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - v0).count(); printf("verify2: %d passes in %.3f s = %.2f ms/pass\n", verifyN, vdt, vdt / verifyN * 1e3);
     }
-    if (const char* at = getenv("BONSAI_ALU")) { eng.aluT = (uint32_t)atoi(at); fprintf(stderr, "[alu] verification GEMV path = %u token rows\n", eng.aluT); }
+    if (const char* at = getenv("KATA_ALU")) { eng.aluT = (uint32_t)atoi(at); fprintf(stderr, "[alu] verification GEMV path = %u token rows\n", eng.aluT); }
     if (vwidth > 0) {   // wide verification: T tokens per round, accept only row 0 -> must reproduce the plain greedy continuation
         const int T = vwidth; if (T < 2 || T > (int)Engine::kMaxVerify) { fprintf(stderr, "--vwidth 2..%u\n", Engine::kMaxVerify); return 1; }
         std::vector<int> seq = toks; int am[Engine::kMaxVerify]; double best = 1e9; int mismatch = 0;
@@ -117,10 +117,10 @@ int main(int argc, char** argv) {
             uint32_t pos = (uint32_t)seq.size(); int base = next; auto t0 = std::chrono::steady_clock::now();
             for (int g = 0; g < gen; g++) {
                 int win[Engine::kMaxVerify]; win[0] = next; for (int k = 1; k < T; k++) win[k] = 1000 + k;   // dummy drafts: distinct, so a permuted token row in the GEMV would show up
-                if (getenv("BONSAI_USE_V2")) { int vt[2] = {win[0], win[0]}; eng.verify2(vt, pos, am); } else eng.verifyWide(win, (uint32_t)T, pos, am);
+                if (getenv("KATA_USE_V2")) { int vt[2] = {win[0], win[0]}; eng.verify2(vt, pos, am); } else eng.verifyWide(win, (uint32_t)T, pos, am);
                 if (g == 0) { for (int k = 1; k < (int)nv; k++) if (eng.verifyLogits(0)[k] > eng.verifyLogits(0)[base]) base = k; }
                 printf("gen[%d] = %d\n", g, am[0]); fflush(stdout);
-                if (getenv("BONSAI_USE_V2")) eng.commit2(false); else eng.commitWide(1); next = am[0]; pos += 1; fflush(stdout);
+                if (getenv("KATA_USE_V2")) eng.commit2(false); else eng.commitWide(1); next = am[0]; pos += 1; fflush(stdout);
             }
             double dt = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
             printf("wide T=%d: %d rounds in %.3f s = %.2f ms/round (accepting 1 token/round)\n", T, gen, dt, dt / gen * 1e3);

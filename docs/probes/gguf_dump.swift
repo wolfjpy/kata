@@ -1,5 +1,5 @@
 import Foundation
-let d = try! Data(contentsOf: URL(fileURLWithPath: "/tmp/bonsai_head.bin"))
+let d = try! Data(contentsOf: URL(fileURLWithPath: "/tmp/kata_head.bin"))
 var p = 0
 func rd<T>(_ t: T.Type) -> T { let v = d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: p, as: T.self) }; p += MemoryLayout<T>.size; return v }
 func str() -> String { let n = Int(rd(UInt64.self)); let s = String(data: d[p..<p+n], encoding: .utf8) ?? "?"; p += n; return s }

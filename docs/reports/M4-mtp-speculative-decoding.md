@@ -99,13 +99,13 @@ T=1→2 增加 59%,T=3 增加近 200%:**ALU 受限**。按操作数估算 T=2 �
 
 ## 4. 数值与质量
 
-`bonsai verify-check` 逐位置对比 `verify2` 的 logits 与精确单 token 路径:
+`kata verify-check` 逐位置对比 `verify2` 的 logits 与精确单 token 路径:
 
 | 路径 | 位置数 | 平均 KL | 最大 KL | 最大 logit 差 | top-1 |
 |---|---|---|---|---|---|
 | LUT + half2(生产) | 66(72 token 提示) | 2.6e-7 | 1.2e-6 | 0.008 | 66/66 |
 | LUT + half2(生产) | 830 | 4.3e-6 | 8.4e-4 | 1.02 | 830/830 |
-| fp32 数学 + fp16 激活(`BONSAI_VERIFY_V1H=1`) | 830 | 1.6e-6 | 2.4e-4 | 0.44 | 830/830 |
+| fp32 数学 + fp16 激活(`KATA_VERIFY_V1H=1`) | 830 | 1.6e-6 | 2.4e-4 | 0.44 | 830/830 |
 
 误差来源:激活用 fp16(与预填充路径相同)贡献大部分;half 累加在此之上约 ×2.7。离群点与上下文长度无关,取决于具体内容。
 均在提议的质量门限(KL ≤ 1e-3、top-1 ≥ 99.7%)之内,但**这是一个有损选项,需要用户确认门限**。
@@ -144,6 +144,6 @@ T=1→2 增加 59%,T=3 增加近 200%:**ALU 受限**。按操作数估算 T=2 �
 
 `k_attn_dec_split` / `k_attn_dec_combine`(`shaders/flash.metal`):同一 KV 头的 6 个头 × 1–2 个 token = 最多 12 行,凑成一个 16 行的 `matmul2d` 块;按 128 个 key 一段拆成多个 split(每段一个 simdgroup),最后合并并乘 sigmoid 门。验证 2 个 token 时只读一遍 K/V(旧内核读两遍),所以 MTP 路径有 ~5% 提升;普通解码持平。数值与旧内核等价(72 个位置 KL 7e-9)。
 
-用 `BONSAI_SKIP=k_attn_split` 整个跳过注意力:7.3K 上下文只多出 ~5 ms/token(17.1 → 18.7 tok/s)。纯带宽探针(`tools/kv_read_probe.cpp`,同样的访问模式)显示:K/V 的读取在 7.3K 个 key 时本身就要 205 µs/层 × 16 层 = **3.3 ms**(每个 key 每层 K+V 共 4 KB,每 token 64 KB),并且跨步布局(`[pos][4 头][256]`)与按头连续布局没有区别(都是 ~145 GB/s)。所以两种注意力内核都已经在带宽的 ~65%,继续优化内核没有意义;32K 上下文的 KV 读取理论值是 13 ms/token(权重 40 ms 之外的 +30%)。缩小这部分只有一条路:压缩 KV(fp8/int8,有损,需要质量门限),见下一步。
+用 `KATA_SKIP=k_attn_split` 整个跳过注意力:7.3K 上下文只多出 ~5 ms/token(17.1 → 18.7 tok/s)。纯带宽探针(`tools/kv_read_probe.cpp`,同样的访问模式)显示:K/V 的读取在 7.3K 个 key 时本身就要 205 µs/层 × 16 层 = **3.3 ms**(每个 key 每层 K+V 共 4 KB,每 token 64 KB),并且跨步布局(`[pos][4 头][256]`)与按头连续布局没有区别(都是 ~145 GB/s)。所以两种注意力内核都已经在带宽的 ~65%,继续优化内核没有意义;32K 上下文的 KV 读取理论值是 13 ms/token(权重 40 ms 之外的 +30%)。缩小这部分只有一条路:压缩 KV(fp8/int8,有损,需要质量门限),见下一步。
 
-新增环境变量:`BONSAI_SKIP=a,b`(CLI 运行时的算子消融)、`BONSAI_SCALAR_DEC=1`(旧的标量解码注意力,用于对照)、`BONSAI_DEC_CHUNK`(split 的 key 数,默认 128)。
+新增环境变量:`KATA_SKIP=a,b`(CLI 运行时的算子消融)、`KATA_SCALAR_DEC=1`(旧的标量解码注意力,用于对照)、`KATA_DEC_CHUNK`(split 的 key 数,默认 128)。

@@ -18,7 +18,7 @@ FFN 的 gate 和 up 占每层 FLOPs 的 ~47%,只对它们做 int8 就拿到了�
 - `Engine::setI8(spec)`:`"all"`(每个矩阵)、`"ffn"`(gate+up)、或逗号列表(`qkv z ssmout wq wk wv wo gate up down`),空串/`none` 关闭。每个 `dExpandGemm` 调用按矩阵名字决定走 int8 还是精确 fp16;其余矩阵不受影响。
 - **只对真正会走 int8 的 GEMM 做激活量化**:`fusedNorm`/`fwhtB` 现在带 `needQ`,只有当这份激活的消费者里有 int8 矩阵时才跑 `k_quant_rows`(`--fast-ffn` 时只有 post-attention 归一化之后那一次)。
 - 数值标签带上矩阵集合(`int8:gate+up`),所以前缀缓存里不同模式的检查点互不混用。
-- 命令行:`run`/`chat` 的 `--fast-ffn`、`--fast`(全部)、`--i8 a,b,c`(开发用)、`--exact`;`kl-eval` 的 `--fast-ffn`/`--i8`;开发入口 `--i8`。原来未文档化的 `BONSAI_I8_EXCLUDE` 环境变量已删除。
+- 命令行:`run`/`chat` 的 `--fast-ffn`、`--fast`(全部)、`--i8 a,b,c`(开发用)、`--exact`;`kl-eval` 的 `--fast-ffn`/`--i8`;开发入口 `--i8`。原来未文档化的 `KATA_I8_EXCLUDE` 环境变量已删除。
 
 ## 3. 注意
 

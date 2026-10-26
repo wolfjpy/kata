@@ -4,7 +4,7 @@
 #include <cstdio>
 int main(int argc, char** argv) {
     if (argc < 3) { fprintf(stderr, "usage: draft_probe model.gguf draft.gguf\n"); return 1; }
-    Engine eng; if (!eng.load(argv[1], "build/bonsai.metallib", 4096, 0)) return 1;
+    Engine eng; if (!eng.load(argv[1], "build/kata.metallib", 4096, 0)) return 1;
     Draft d; if (!d.load(eng, argv[2])) return 1;
     printf("draft ok: %u layers, %u heads / %u kv, head %u, window %u, block %u\n", Draft::kLayers, Draft::kHeads, Draft::kKvHeads, Draft::kHeadDim, Draft::kWindow, Draft::kBlock);
     printf("target taps:");

@@ -50,7 +50,7 @@
 | **32(= 1024 行全在一组,即 M 优先)** | **3.98 s** |
 
 chunk 取 2048 时 GM=32 只有 190 tok/s(8K),GM=64 只有 157:A 矩阵(M×K)太大装不进缓存。结论:**chunk 1024、GM 32**。int8 路径对顺序不敏感(受 ALU/epilogue 而不是 B 带宽限制)。
-实现:`tile_order(id, Mt, Nt, gm)`,环境变量 `BONSAI_GM` 可覆盖(默认 32)。
+实现:`tile_order(id, Mt, Nt, gm)`,环境变量 `KATA_GM` 可覆盖(默认 32)。
 
 ### 2.3 权重展开内核
 
@@ -61,7 +61,7 @@ chunk 取 2048 时 GM=32 只有 190 tok/s(8K),GM=64 只有 157:A 矩阵(M×K)太
 - 激活量化粒度从"每 token 一个 scale"改为"每 (token, 128 元素组) 一个 scale",epilogue 在逐组缩放时多乘一个行因子。72 个位置:平均 KL 2.3e-4 → 8.2e-5,最大 KL 3.2e-3 → 3.1e-4。
 - 协作张量元素布局(`tools/layout_probe`):每个 lane 的 32 个元素 = 4 行(r, r+8, r+32, r+40)× 2 个列块(c0..c0+3, c0+32..c0+35)。epilogue 因此只需要每组 2 次 `float4` 读 weight scale + 4 次读 activation scale(运行时校验布局,不符则回退通用路径)。同条件下比通用路径快 10–13%,结果逐位一致。
 
-## 3. int8 质量评估(新工具 `bonsai kl-eval`)
+## 3. int8 质量评估(新工具 `kata kl-eval`)
 
 在 24.5K token 的混合语料(论文、中英文文档、MSL 规范片段)上,精确路径与 int8 路径各自完整预填充(各自维护状态),比较每个 chunk 末尾 64 个位置(共 1536 个)的全词表分布:
 
@@ -74,7 +74,7 @@ chunk 取 2048 时 GM=32 只有 190 tok/s(8K),GM=64 只有 157:A 矩阵(M×K)太
 → **int8 未通过 top-1 门限**,因此保持 opt-in(`--fast`),默认走精确路径。
 72 个位置的小测试(KL 8e-5)掩盖了误差随上下文累积的问题,必须用长语料评估。
 
-前 8K token 上的逐矩阵敏感度(`BONSAI_I8_EXCLUDE`,被排除的矩阵走 fp16):
+前 8K token 上的逐矩阵敏感度(`KATA_I8_EXCLUDE`,被排除的矩阵走 fp16):
 
 | 排除 | 平均 KL | top-1 |
 |---|---|---|

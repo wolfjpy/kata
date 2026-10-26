@@ -9,20 +9,20 @@
 ## 实现
 
 - `src/gguf.{h,cpp}`:GGUF v3 读取器,整个文件 mmap 后用 `MTLBuffer(bytesNoCopy)` 零拷贝包成一个 buffer;张量按文件偏移绑定;从 GGUF 里读 Hadamard 符号向量。
-- `src/gpu.{h,cpp}`:Metal 上下文(metal-cpp,离线编译的 `bonsai.metallib`)。
-- `config/bonsai_m6.h`:编译期常量,加载时对照 GGUF 元数据校验。
+- `src/gpu.{h,cpp}`:Metal 上下文(metal-cpp,离线编译的 `kata.metallib`)。
+- `config/kata_m6.h`:编译期常量,加载时对照 GGUF 元数据校验。
 - `shaders/`:
   - `ops.metal`:embedding(反量化 + `s⊙(Hz)`)、`k_rms_fwht`(RMSNorm/SwiGLU/头置换 + 符号 + 1024 点 FWHT 的四种模式)、`k_rmsnorm`、加法、argmax。
   - `gemv.metal`:参考质量的 PTQ1_0 与 bf16 矩阵向量乘(每行一个 simdgroup)。
   - `gdn.metal`:GDN 的 causal conv 和递推步(每个 V 头一个 threadgroup,每个线程持有状态的一行)。
   - `attn.metal`:attention 的 q/k RMSNorm + RoPE + KV 写入、流式 softmax 解码。
 - `src/engine.{h,cpp}`:每个 token 一个 command buffer,按层编码;可选地记录每层残差和每层 block 输出用于对照。
-- `src/main.cpp`:`bonsai --model M --ids 1,2,3 [--ref-dir D] [--ref-logits F] [--gen N]`。
+- `src/main.cpp`:`kata --model M --ids 1,2,3 [--ref-dir D] [--ref-logits F] [--gen N]`。
 - Makefile 对 shader 加了 `-fno-fast-math`,保证数值与参考可比。
 
 ## 结果
 
-对照脚本:`tools/ref_logits` 导出参考,`build/bonsai` 逐层比较。
+对照脚本:`tools/ref_logits` 导出参考,`build/kata` 逐层比较。
 
 | 提示 | 位置 | 层间残差相对误差 | top-1 一致 | 最大 logit 差 |
 |---|---|---|---|---|

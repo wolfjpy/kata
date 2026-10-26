@@ -1,4 +1,4 @@
-# Bonsai-M6 推理引擎 — Checkpoint 001
+# Kata-M6 推理引擎 — Checkpoint 001
 
 - 写于:2026-10-23(本机时间 13:55 EDT 之后)
 - 作用:**让一个没有任何历史记忆的新会话,仅凭本文件和 `docs/` 下的配套文件就能无缝接着干。**
@@ -11,7 +11,7 @@
 
 ### 0.1 一句话任务
 
-为 **Ternary Bonsai 2 27B**(Prism ML 基于 Qwen3.8-27B 的三值量化版,Ollama 标签 `mannix/Bonsai-2-27B:mtp-ptq1_0`,6.4GB GGUF)写一个**只用 Apple Metal(C++ 加 MSL,metal-cpp)、不用 Python、只针对 Mac mini M6 16GB/256GB 这一台机器、速度是唯一目标**的推理引擎:prefill 极快,decode tok/s 最大。
+为 **Ternary Bonsai-2-27B**(Prism ML 基于 Qwen3.8-27B 的三值量化版,Ollama 标签 `mannix/Bonsai-2-27B:mtp-ptq1_0`,6.4GB GGUF)写一个**只用 Apple Metal(C++ 加 MSL,metal-cpp)、不用 Python、只针对 Mac mini M6 16GB/256GB 这一台机器、速度是唯一目标**的推理引擎:prefill 极快,decode tok/s 最大。
 
 ### 0.2 与用户协作的规则(从对话中总结)
 
@@ -26,7 +26,7 @@
 
 ### 0.3 待用户确认的三件事(上一条助手消息提出,尚无回答)
 
-1. 建项目骨架:vendoring 最新 metal-cpp(固定 commit)、`config/bonsai_m6.h`、`VERSIONS`、`Makefile`。
+1. 建项目骨架:vendoring 最新 metal-cpp(固定 commit)、`config/kata_m6.h`、`VERSIONS`、`Makefile`。
 2. `brew install cmake`(最新版),编译 Prism llama.cpp 最新 master 作基线和对照实现。
 3. 之后进入 M0 微基准(§13)。
 
@@ -74,11 +74,11 @@ curl -sL -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' https
 
 | 文件 | 说明 | SHA-256(完整) |
 |---|---|---|
-| `实现Ternary Bonsai 2 27B (Qwen 3.8 27B) in.md` | 用户最初的需求原文(含内存层级表、baseRT 说明、PyTorch 参考链接) | `e3c0793037044bcd9fa2daa8380c042bd3b8d2a6774e1b13341a78d12729d77a` |
+| `实现Ternary Bonsai-2-27B (Qwen 3.8 27B) in.md` | 用户最初的需求原文(含内存层级表、baseRT 说明、PyTorch 参考链接) | `e3c0793037044bcd9fa2daa8380c042bd3b8d2a6774e1b13341a78d12729d77a` |
 | `Apple Silicon 的 CPU 核心分三类:.md` | 用户的第二批笔记(CPU/ANE/Metal 4 编码/内存预算/各种要求) | `0fcc132431f106d05ff15a18ecd29d80207e4cd6ea99ef9ea34c17ad0f708835` |
 | `Apple M6 vs M5 Chip Deep-Dive.png` | M5 对 M6 的 die shot(见 §6.1) | `de5fa4deea03868d96c145aa177ab830cb68902ef35ba4be04e36d2a58ef1606` |
 | `qwen3.5.webp` | Sebastian Raschka 的 Qwen3.5 架构图(Gated Attention、Gated DeltaNet、3:1 比例、KV 随上下文增长对比) | `533a8c1a58564632a45923e42ecd1f085a00d84c2102d6676ac6807154dde10d` |
-| `bonsai-2-27b-whitepaper.pdf` | Prism 白皮书(2026-09),14 页 | `aea10331ede3b34c34c21d1a45b80fd0fd6e231b3e8db7bd6346e20fcb8402c4` |
+| `Bonsai 2-whitepaper.pdf` | Prism 白皮书(2026-09),14 页 | `aea10331ede3b34c34c21d1a45b80fd0fd6e231b3e8db7bd6346e20fcb8402c4` |
 | `BaseRT-base.pdf` | BaseRT 第一篇论文,arXiv 2607.00501v1,11 页 | `722762bc076985b4da743dcf7cfe761e147c2f294e7905b1ac919a48f577eb54` |
 | `baseRT.pdf` | BaseRT 第二篇论文(M5 Neural Accelerator),arXiv 2607.19438v1,8 页 | `28e5a6efacb3eee1fac0227e8571cd297636ec16be463f5c3c41085811d7120f` |
 | `Metal-Feature-Set-Tables.pdf` | Apple 官方,2026-05-21,到 Apple10(M5)为止,18 页 | `9f31df15dd6827545702c5a0845f6e36e1889878cd0e534123bd70211e5c00a8` |
@@ -88,7 +88,7 @@ curl -sL -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' https
 
 ## 1. 用户的全部要求(按出现顺序,尽量保持原意)
 
-### 1.1 最初需求(文件 `实现Ternary Bonsai…md`)
+### 1.1 最初需求(文件 `实现Ternary Kata…md`)
 
 1. 目标模型就是 `https://ollama.com/mannix/Bonsai-2-27B:mtp-ptq1_0`。
 2. 目标硬件就是 **Mac mini M6、16GB UMA、256GB SSD**。
@@ -216,14 +216,14 @@ xcrun metal -std=metal4.1 -c t.metal -o t.air && xcrun metallib t.air -o t.metal
 ## 4. 项目目录当前状态
 
 ```
-projects/bonsai/
+projects/kata/
 ├── .git/                      # 无任何 commit
 ├── .gitkeep
-├── 实现Ternary Bonsai 2 27B (Qwen 3.8 27B) in.md     # 用户的原始需求
+├── 实现Ternary Bonsai-2-27B (Qwen 3.8 27B) in.md     # 用户的原始需求
 ├── Apple Silicon 的 CPU 核心分三类:.md                 # 用户的第二批笔记
 ├── Apple M6 vs M5 Chip Deep-Dive.png
 ├── qwen3.5.webp
-├── BaseRT-base.pdf  baseRT.pdf  bonsai-2-27b-whitepaper.pdf
+├── BaseRT-base.pdf  baseRT.pdf  Bonsai 2-whitepaper.pdf
 ├── Metal-Feature-Set-Tables.pdf  Metal-Shading-Language-Specification.pdf
 └── docs/
     ├── CHECKPOINT-001.md      # 本文件
@@ -253,7 +253,7 @@ projects/bonsai/
   - params blob `sha256:e7a4ccdae39a06680bcd804c07db5a7d6b155972642548bce8601abb5d3ca16f`(388 B):`{"min_p":0.05,"presence_penalty":0,"repeat_penalty":1,"temperature":1,"think_budget":"high","think_budget_message":"…","top_k":20,"top_p":0.95}`
 - Blob 下载(支持 HTTP Range,探测时用的就是这个):
   `https://registry.ollama.ai/v2/mannix/Bonsai-2-27B/blobs/sha256:174c9c6584e118766d5511e00a84fd8a31d146248915a726cfac8e6d140c6204`
-- 许可:Apache-2.0;"Created using Bonsai by Prism ML"(如果公开分发需署名);基于 Qwen3.8-27B(Apache-2.0)。
+- 许可:Apache-2.0;"Created using Kata by Prism ML"(如果公开分发需署名);基于 Qwen3.8-27B(Apache-2.0)。
 - 这个 GGUF 是第三方(`opencoti`/mannix)把 Prism 的 `Ternary-Bonsai-2-27B-PTQ1_0.gguf` 加上从 Qwen3.8-27B 的 `model-00018-of-00018.safetensors`(sha256 `1d3479509e21494658f9b64d317f5ea8e55c4025d28c702d6c4d0b356ce8ea06`)取出的 `mtp.*` 层(Q8_0)合成的。KV `opencoti.mtp.source` 记录了这一点。
 - Prism 官方 HF 仓库 `prism-ml/Ternary-Bonsai-2-27B-gguf` 有:`F16`、`PQ2_0`(7.25GB)、`PTQ1_0`(5.93GB,无 MTP)、两个 mmproj、`KNOWN_ISSUES.md`(**还没读,应该读**)。
 
@@ -486,7 +486,7 @@ typedef struct {
 
 ## 7. 参考资料摘要
 
-### 7.1 Prism 白皮书(`bonsai-2-27b-whitepaper.pdf`,2026-09)
+### 7.1 Prism 白皮书(`Bonsai 2-whitepaper.pdf`,2026-09)
 
 - 架构同 Qwen3.8-27B:约 75% 线性注意力、25% full attention。
 - 权重:三值 {-1,0,+1} + fp16 group-128 scale,**固定旋转基**(1024 块 Hadamard,固定 ±1 符号)。有效 1.76 bpw/5.93GB(PTQ1_0),PQ2_0 为 2.16 bpw/7.25GB。**白皮书称 PTQ1_0 在 Apple silicon 上不比 PQ2_0 快**(解包更费算力)。
@@ -597,9 +597,9 @@ Metal 内核文件(分支 `prism`,`ggml/src/ggml-metal/kernels/`):`mul_mv.metal`
 
 - 语言:**C++17 + MSL(`-std=metal4.1`)**,通过 **metal-cpp**(最新 GitHub main,固定 commit)访问 Metal。不用 Swift、不用 Python。
 - 构建:**纯 `Makefile`**,不用 cmake(cmake 只为编译 Prism llama.cpp 基线才装)。MSL 离线编译为 `.metallib`(AOT),pipeline 可用 binary archive/pipeline dataset 序列化,启动时不做 JIT。
-- 统一配置:`config/bonsai_m6.h`(`constexpr`,C++ 与 MSL 共用,用 `#ifdef __METAL_VERSION__` 区分),包含全部 shape、tile、核数假设、内存布局、容量、版本。**`bonsai-pack` 打包时对照 GGUF 元数据做 `static_assert`,不匹配即拒绝。**
+- 统一配置:`config/kata_m6.h`(`constexpr`,C++ 与 MSL 共用,用 `#ifdef __METAL_VERSION__` 区分),包含全部 shape、tile、核数假设、内存布局、容量、版本。**`kata-pack` 打包时对照 GGUF 元数据做 `static_assert`,不匹配即拒绝。**
 - `VERSIONS` 文件:记录固定的 SDK、metal-cpp commit、Prism commit、模型 digest 等。
-- 计划中的二进制(**仅 CLI**):`bonsai-pack`(GGUF → 重排后的权重文件)、`bonsai`(运行时:chat/agent 用的 CLI)、`bonsai-bench`、`bonsai-verify`(对 Prism llama.cpp 做 logits/KL 对比)。
+- 计划中的二进制(**仅 CLI**):`kata-pack`(GGUF → 重排后的权重文件)、`kata`(运行时:chat/agent 用的 CLI)、`kata-bench`、`kata-verify`(对 Prism llama.cpp 做 logits/KL 对比)。
 - 核心规则:热路径零分配;tokenizer 和 chat template 用 C++ 手写;采样放 GPU。
 
 ### 10.3 权重格式与布局(**128B 对齐的精确解**)
@@ -657,7 +657,7 @@ scale 处理(用户要求的"epilogue 按 K=128 分段累加"):
 - **CPU n-gram/prompt-lookup 草稿**:agent 场景(改代码、回显 JSON/工具输出)有大量复制自上下文的片段,CPU 查 n-gram 零 DRAM 流量;CPU 没赶上就不填。
 - prefill 阶段 MTP 层**只算 K/V**(Prism #358)。
 - 可选:MTP 层从 Q8_0 重新量化到 Q4(约 230MB),因为验证是精确的,只影响接受率,不影响结果;需实测接受率。
-- 备选 drafter:Prism 新发布的 Bonsai-2 2B(约 0.44GB 三值),未评估。
+- 备选 drafter:Prism 新发布的 Kata-2 2B(约 0.44GB 三值),未评估。
 
 ### 10.9 prefill 路径
 
@@ -709,7 +709,7 @@ scale 处理(用户要求的"epilogue 按 K=128 分段累加"):
   - 本机 `AppleNeuralEngine.framework` 在 `/System/Library/PrivateFrameworks`,`coremlc` 在 Xcode 工具链里(已确认存在)。
   - **排到最后**,GPU 路径完成后再做可行性探测。
 
-### 10.14 SSD 与预计算清单(`bonsai-pack` 离线完成)
+### 10.14 SSD 与预计算清单(`kata-pack` 离线完成)
 
 - 重排后的权重文件(§10.3 布局),存 SSD(剩余约 97GiB)。
 - 合并常量向量 `γ_l ⊙ d`;`A = −exp(A_log)` 等预变换(已在 GGUF 里);RoPE cos/sin 表(64K 位置 × 32 频率 fp32 约 16.8MB,或实时计算);分词器的 BPE 表预处理成扁平数组/完美哈希以便 mmap;chat template 编译成 C++ 代码;每个 kernel 的静态工作划分表。
@@ -788,7 +788,7 @@ scale 处理(用户要求的"epilogue 按 K=128 分段累加"):
 
 0. 复核环境(§0.4)。
 1. 向用户确认 §0.3 的三件事。
-2. 建项目骨架:`third_party/metal-cpp`(固定到 `8cdde68ae36a636c84cbb48ebcbc8f3b60251ea0` 或更新的 main)、`config/bonsai_m6.h`、`VERSIONS`、`Makefile`、`src/`、`tools/`。
+2. 建项目骨架:`third_party/metal-cpp`(固定到 `8cdde68ae36a636c84cbb48ebcbc8f3b60251ea0` 或更新的 main)、`config/kata_m6.h`、`VERSIONS`、`Makefile`、`src/`、`tools/`。
 3. `brew install cmake`;克隆 Prism llama.cpp 最新 master(当前 `73bfe6cc4855…`),开启 Metal 编译;下载 HF 的 `Ternary-Bonsai-2-27B-PTQ1_0.gguf`(5.93GB)和 Ollama 的 MTP GGUF(6.4GB);跑 `llama-bench` 的 tg128/pp512,**记录本机基线**(用于所有后续对比,也是 logits 参考)。
 4. M0 微基准。
 
@@ -810,7 +810,7 @@ scale 处理(用户要求的"epilogue 按 K=128 分段累加"):
 
 ### 13.3 里程碑
 
-- **M1**:GGUF 解析、`bonsai-pack`、分词器、零拷贝加载;单个三值 GEMV 对 CPU 参考做正确性验证。
+- **M1**:GGUF 解析、`kata-pack`、分词器、零拷贝加载;单个三值 GEMV 对 CPU 参考做正确性验证。
 - **M2**:完整前向(先写朴素但正确的 kernel),logits 对齐 Prism 参考;解决 R1(注意力门)、R9(Hadamard 约定)。
 - **M3**:decode 优化(融合、ICB、GPU 采样),目标是带宽 roofline 的 ≥85%。
 - **M4**:MTP 投机解码 + GDN lazy commit;CPU n-gram 草稿。
@@ -841,12 +841,12 @@ scale 处理(用户要求的"epilogue 按 K=128 分段累加"):
 
 ```sh
 # 0. 目录
-cd <home>/super.engineering/projects/bonsai
+cd <repo root>
 
 # 1. 取 GGUF 头(前 12MB)并解析(Swift)
 B=https://registry.ollama.ai/v2/mannix/Bonsai-2-27B/blobs/sha256:174c9c6584e118766d5511e00a84fd8a31d146248915a726cfac8e6d140c6204
-curl -sL -r 0-12000000 -o /tmp/bonsai_head.bin $B
-swiftc -O docs/probes/gguf_dump.swift -o /tmp/gguf_dump && /tmp/gguf_dump > /tmp/out.txt     # 脚本里硬编码读 /tmp/bonsai_head.bin
+curl -sL -r 0-12000000 -o /tmp/kata_head.bin $B
+swiftc -O docs/probes/gguf_dump.swift -o /tmp/gguf_dump && /tmp/gguf_dump > /tmp/out.txt     # 脚本里硬编码读 /tmp/kata_head.bin
 
 # 2. 按偏移取任意张量(数据区起点 DS=11122176;偏移来自 docs/data/gguf_header_dump.txt)
 DS=11122176; OFF=594124800; LEN=19496960         # 例:blk.0.ffn_down.weight
@@ -982,7 +982,7 @@ kernel void k(device TA* A [[buffer(0)]], device TB* B [[buffer(1)]], device TC*
 
 ## 19. 增补 B(2026-10-23 夜):persistent megakernel、DRAM 实测、CPU SME、ANE 私有 API、外部 drafter
 
-用户新增指令(摘要):(1) 利用模型全部事实,针对这台硬件调优 tile/网格顺序/布局;(2) **用 persistent megakernel 减少 overhead、减少 dispatch**;(3) 问:能否让 CPU 提前预处理下一个 token、能否融合成一个大内核;(4) 问:备选 drafter(Bonsai-2 2B)能否放在 ANE/CPU 上提前做;(5) **尝试使用 CPU 的矩阵协处理器(AMX/SME),如果能加速**;(6) **尽量使用 ANE,如果能加速**。
+用户新增指令(摘要):(1) 利用模型全部事实,针对这台硬件调优 tile/网格顺序/布局;(2) **用 persistent megakernel 减少 overhead、减少 dispatch**;(3) 问:能否让 CPU 提前预处理下一个 token、能否融合成一个大内核;(4) 问:备选 drafter(Kata-2 2B)能否放在 ANE/CPU 上提前做;(5) **尝试使用 CPU 的矩阵协处理器(AMX/SME),如果能加速**;(6) **尽量使用 ANE,如果能加速**。
 
 ### 19.1 新增探测程序(`docs/probes/`)与原始输出
 
@@ -1036,10 +1036,10 @@ kernel void k(device TA* A [[buffer(0)]], device TB* B [[buffer(1)]], device TC*
 ### 19.4 "让 CPU 提前预处理下一个 token / 融合成一个大内核"
 
 - **下一个 token 的 id 要等采样结束才知道**,所以不能提前处理;只有 draft token 是提前知道的,但它们的预处理(embedding 查表 1.1KB + 5120 宽反向 FWHT + 第 0 层的 norm/FWHT)总共只有微秒量级,在 GPU 上和主 kernel 融合更省(没有跨设备同步,同步延迟 ≥10~50µs)。**结论:不做 CPU 预处理,embedding 留在 GPU 步内。**
-- 全部预计算(能提前做的)已在 `bonsai-pack` 清单里(§10.14):常量向量 `γ⊙d`、RoPE 表、权重重排等。
+- 全部预计算(能提前做的)已在 `kata-pack` 清单里(§10.14):常量向量 `γ⊙d`、RoPE 表、权重重排等。
 - "融合成一个大内核":见 19.3。
 
-### 19.5 外部 drafter(Bonsai-2 2B)能否放 CPU/ANE 提前做
+### 19.5 外部 drafter(Kata-2 2B)能否放 CPU/ANE 提前做
 
 - 与 MTP 不同,**外部 drafter 不依赖主模型的 hidden state**,只依赖 token 序列,所以**可以并行**:在主模型 verify 第 n 步时,drafter 可以假设"全部被接受"继续往前起草(被拒绝就丢弃)。
 - 规格(HF):`Ternary-Bonsai-2-2B-PTQ1_0.gguf` **0.43GB**,基础模型 `Qwen/Qwen3.5-2B`(18 层线性注意力 + 6 层 full attention);4B 另有 `PQ2_0-MTP-Q8_0`(1.27GB)和 **`DFlash2-BF16`(1.58GB,块 drafter)**。tokenizer 是否与 27B 完全一致**未验证**(同为 Qwen3.5 家族,大概率一致)。
@@ -1089,9 +1089,9 @@ kernel void k(device TA* A [[buffer(0)]], device TB* B [[buffer(1)]], device TC*
 3. **与 GPU 同时运行**,测互相干扰和 DRAM 争用。
 4. **通过条件**:ANE 并发持续吞吐 ≥ 约 6 TFLOPS 等效,且 GPU 吞吐下降 <10%。通过后才做"FFN 按 chunk-wave 流水到 ANE"的设计;不通过则记录并放弃。
 
-### 19.8 针对这台硬件的调优方式:离线自动调优 `bonsai-tune`
+### 19.8 针对这台硬件的调优方式:离线自动调优 `kata-tune`
 
-- 全部形状已知(约 8 种 GEMV/GEMM shape × M 档位),所以**不靠手工猜,用自动调优器在本机扫出最优值并冻结为常量**:`bonsai-tune` 对每个 `(阶段, M 档位, N, K)` 扫描并生成 `config/tuned_m6.h`(`constexpr`)。
+- 全部形状已知(约 8 种 GEMV/GEMM shape × M 档位),所以**不靠手工猜,用自动调优器在本机扫出最优值并冻结为常量**:`kata-tune` 对每个 `(阶段, M 档位, N, K)` 扫描并生成 `config/tuned_m6.h`(`constexpr`)。
 - prefill 的扫描维度:`matmul2d` 的 tile(TM、TN)、每 threadgroup 的 simdgroup 数、网格顺序(N 快/M 快/分块 swizzle)、权重 staging 布局(row-major/tile-major)、K 方向分块、操作数位置、fp16 路径 vs int8 路径。M 档位:{512, 1024, 2048, 4096}。
 - decode 的扫描维度:每 simdgroup 的行数(4/5/8)、每 TG 的 simdgroup 数、TG 总数(取 12 的倍数,且 ≤ 12 × 3072/线程数)、load 向量宽度和在途 load 数、展开度、解包方案(float 管线 `floor` / LUT / activation-side LUT)。M 档位:{1, 2, 3, 4}。
 - 已有的原型:`matmul2d_prefill_shape_probe.cpp`(prefill 扫描)和 `persistent_kernel_probe.cpp`(带宽扫描)。
@@ -1102,7 +1102,7 @@ kernel void k(device TA* A [[buffer(0)]], device TB* B [[buffer(1)]], device TC*
 - §10.5 和 §10.10:persistent megakernel 的收益**不成立**(见 19.3);"省 400 次 dispatch 约省 5%~7%"下调为约 0.5%。
 - §10.12:CPU 新增可选角色"SME 协算"(优先级低)。
 - §10.13:ANE 作为带止损的 M0.9 实验。
-- §12:新增风险 R13:`bonsai-tune` 的扫描空间大,需要限定在真实形状和少量 M 档位上。
+- §12:新增风险 R13:`kata-tune` 的扫描空间大,需要限定在真实形状和少量 M 档位上。
 
 ---
 

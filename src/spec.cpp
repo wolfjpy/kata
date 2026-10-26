@@ -7,7 +7,7 @@ static double since(Clock::time_point t) { return std::chrono::duration<double>(
 
 SpecResult specGenerate(Engine& eng, uint32_t pos, uint32_t ctx, int maxTokens, const SamplerParams& sp, std::mt19937_64& rng, const std::function<bool(int)>& isEog,
                         const std::function<void(int)>& emit, SpecStats* stats) {
-    const int H = 5120; const int V = (int)bonsai::kVocab;
+    const int H = 5120; const int V = (int)kata::kVocab;
     SpecStats dummy; SpecStats& st = stats ? *stats : dummy;
     auto sample = [&](const float* lg, int greedyTok) { auto t0 = Clock::now(); int r = sp.temp <= 0.0f ? greedyTok : sampleToken(lg, V, sp, rng); st.sampleSec += since(t0); return r; };
     uint32_t n = pos;                                    // position of `next`
@@ -57,7 +57,7 @@ struct DepthStat { double p[3] = {0.6, 0.5, 0.4}; double ms = 70.0; int n = 0; }
 SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTokens, const SamplerParams& sp, std::mt19937_64& rng, const std::function<bool(int)>& isEog,
                              const std::function<void(int)>& emit, SpecStats* stats, bool adaptive) {
     SpecStats dummy; SpecStats& st = stats ? *stats : dummy;
-    const int H = 5120, V = (int)bonsai::kVocab;
+    const int H = 5120, V = (int)kata::kVocab;
     auto sampleFrom = [&](const float* lg, int row) { const float* l = lg + (size_t)row * V; int g = 0; for (int i = 1; i < V; i++) if (l[i] > l[g]) g = i;
         if (sp.temp <= 0.0f) return g; return sampleToken(l, V, sp, rng); };
     uint32_t n = pos;
@@ -72,8 +72,8 @@ SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTok
         if (firstRound) { emit(next); emitted++; st.tokens++; firstRound = false; }   // the anchor is emitted once, before the first round
         if (isEog(next) || emitted >= maxTokens || n + 5 >= ctx) { res.unfed = next; eng.setHPrev(hPrev.data()); res.pos = n; return res; }
         // ---- pick the depth
-        int slot = getenv("BONSAI_CHAIN_D1") ? 0 : 1;
-        const bool force3 = getenv("BONSAI_CHAIN_D3") != nullptr, force1 = getenv("BONSAI_CHAIN_D1") != nullptr;
+        int slot = getenv("KATA_CHAIN_D1") ? 0 : 1;
+        const bool force3 = getenv("KATA_CHAIN_D3") != nullptr, force1 = getenv("KATA_CHAIN_D1") != nullptr;
         if (adaptive && !force3 && !force1 && ds[0].n > 2 && ds[1].n > 2) {
             auto e1 = 1.0 + ds[0].p[0];
             auto e4 = 1.0 + ds[1].p[0] * (1.0 + ds[1].p[1] * (1.0 + ds[1].p[2]));
@@ -104,7 +104,7 @@ SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTok
         }
         if (nextTok < 0) nextTok = fastDepth1 ? sampleFrom(eng.logits(), 0) : sampleFrom(eng.verifyLogits((int)d), (int)d);
         const uint32_t F = (uint32_t)matched + 1;
-        if (getenv("BONSAI_DBG_CHAIN")) { fprintf(stderr, "  [r] n=%u win", n); for (uint32_t q = 0; q <= d; q++) fprintf(stderr, " %d", win[q]);
+        if (getenv("KATA_DBG_CHAIN")) { fprintf(stderr, "  [r] n=%u win", n); for (uint32_t q = 0; q <= d; q++) fprintf(stderr, " %d", win[q]);
             fprintf(stderr, " | am"); for (uint32_t q = 0; q < T; q++) fprintf(stderr, " %d", am[q]); fprintf(stderr, " | matched %d next %d F %u\n", matched, nextTok, F); }
         if (fastDepth1) eng.commit2(false); else eng.commitWide(F);
         DepthStat& D = ds[slot]; D.n++;
@@ -114,11 +114,11 @@ SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTok
         for (uint32_t j = 1; j < F && emitted < maxTokens; j++) { emit(win[(size_t)j]); emitted++; st.tokens++; }   // the accepted drafts
         if (emitted < maxTokens) { emit(nextTok); emitted++; st.tokens++; }                                          // the correction / bonus token
         { std::vector<float> hh(H); if (fastDepth1) memcpy(hh.data(), eng.hidden(), (size_t)H * 4); else eng.verifyHidden(F - 1, hh.data());
-          if (getenv("BONSAI_DBG_CHAIN")) { double s1 = 0, s0 = 0; for (int q = 0; q < H; q++) { s1 += std::fabs(hh[(size_t)q]); s0 += std::fabs(hPrev[(size_t)q]); }
+          if (getenv("KATA_DBG_CHAIN")) { double s1 = 0, s0 = 0; for (int q = 0; q < H; q++) { s1 += std::fabs(hh[(size_t)q]); s0 += std::fabs(hPrev[(size_t)q]); }
               fprintf(stderr, "  [h] src=%s row=%u new sum|h|=%.1f prev sum|h|=%.1f first %.4f vs %.4f\n", fastDepth1 ? "bufH" : "pHh", fastDepth1 ? 0u : F - 1, s1, s0, hh[0], hPrev[0]); }
           hPrev = hh; }
         next = nextTok; n += F;
-        if (getenv("BONSAI_DBG_CHAIN") && ds[1].n > 0) fprintf(stderr, "  [chain] d3: p1 %.3f p2 %.3f p3 %.3f | d1: p1 %.3f (n %d/%d)\n", ds[1].p[0], ds[1].p[1], ds[1].p[2], ds[0].p[0], ds[1].n, ds[0].n);
+        if (getenv("KATA_DBG_CHAIN") && ds[1].n > 0) fprintf(stderr, "  [chain] d3: p1 %.3f p2 %.3f p3 %.3f | d1: p1 %.3f (n %d/%d)\n", ds[1].p[0], ds[1].p[1], ds[1].p[2], ds[0].p[0], ds[1].n, ds[0].n);
         if (emitted >= maxTokens) { res.unfed = -1; res.pos = n; return res; }
     }
 }

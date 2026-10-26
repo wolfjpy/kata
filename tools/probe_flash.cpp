@@ -9,7 +9,7 @@
 #include <random>
 #include <vector>
 int main(int argc, char** argv) {
-    Gpu gpu; if (!gpu.init("build/bonsai.metallib")) return 1;
+    Gpu gpu; if (!gpu.init("build/kata.metallib")) return 1;
     const uint32_t maxCtx = 8448; const char* kname = argc > 1 ? argv[1] : "k_flash_prefill";
     MTL::Buffer* kc = gpu.alloc((size_t)maxCtx * 1024 * 2); MTL::Buffer* vc = gpu.alloc((size_t)maxCtx * 1024 * 2);
     MTL::Buffer* q = gpu.alloc((size_t)1024 * 6144 * 2); MTL::Buffer* gate = gpu.alloc((size_t)1024 * 6144 * 4); MTL::Buffer* out = gpu.alloc((size_t)1024 * 6144 * 4);

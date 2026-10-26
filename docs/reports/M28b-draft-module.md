@@ -66,5 +66,5 @@ out = rmsnorm(inpL, output_norm); logits = target_lm_head(out)
 make build/dq_probe build/bench_draft build/draft_probe
 build/dq_probe       ../../models/drafters/dflash2-q4km.gguf    # 解码 vs ggml(逐位)
 build/bench_draft    ../../models/drafters/dflash2-q4km.gguf    # 草稿矩阵乘正确性 + 带宽
-build/draft_probe ../../models/bonsai-2-27b-mtp-ptq1_0.gguf ../../models/drafters/dflash2-q4km.gguf   # 绑定与几何
+build/draft_probe ../../models/Bonsai 2-mtp-ptq1_0.gguf ../../models/drafters/dflash2-q4km.gguf   # 绑定与几何
 ```

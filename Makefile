@@ -1,4 +1,4 @@
-# Bonsai-M6 build. Plain make, no cmake.
+# Kata-M6 build. Plain make, no cmake.
 export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 CXX      ?= clang++
 CXXFLAGS ?= -std=c++20 -O2 -g -Wall -Wextra -Wno-unused-parameter -Iconfig -Ithird_party/metal-cpp -Isrc
@@ -15,24 +15,24 @@ MMSRCS := $(wildcard src/*.mm)
 OBJS := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SRCS)) $(patsubst src/%.mm,$(BUILD)/%.o,$(MMSRCS))
 
 .PHONY: all clean shaders ref_logits
-all: $(BUILD)/bonsai $(BUILD)/bonsai.metallib
+all: $(BUILD)/kata $(BUILD)/kata.metallib
 
-$(BUILD)/%.o: src/%.cpp $(wildcard src/*.h) config/bonsai_m6.h | $(BUILD)
+$(BUILD)/%.o: src/%.cpp $(wildcard src/*.h) config/kata_m6.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: src/%.mm $(wildcard src/*.h) config/bonsai_m6.h | $(BUILD)
+$(BUILD)/%.o: src/%.mm $(wildcard src/*.h) config/kata_m6.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) -x objective-c++ -fobjc-arc -c $< -o $@
 
-$(BUILD)/bonsai: $(OBJS)
+$(BUILD)/kata: $(OBJS)
 	$(CXX) $(OBJS) $(LDFLAGS) -o $@
 
-$(BUILD)/%.air: shaders/%.metal $(wildcard shaders/*.h) config/bonsai_m6.h | $(BUILD)
+$(BUILD)/%.air: shaders/%.metal $(wildcard shaders/*.h) config/kata_m6.h | $(BUILD)
 	$(METAL) -c $< -o $@
 
-$(BUILD)/bonsai.metallib: $(AIRS)
+$(BUILD)/kata.metallib: $(AIRS)
 	$(METALLIB) $(AIRS) -o $@
 
-shaders: $(BUILD)/bonsai.metallib
+shaders: $(BUILD)/kata.metallib
 
 ref_logits: | $(BUILD)
 	$(CXX) -std=c++17 -O2 -I$(REF)/include -I$(REF)/ggml/include tools/ref_logits.cpp -L$(REF)/build/bin -lllama -lggml -lggml-base -Wl,-rpath,$(abspath $(REF))/build/bin -o $(BUILD)/ref_logits

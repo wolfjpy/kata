@@ -7,7 +7,7 @@
 - `src/tokenizer.{h,cpp}`:byte-level BPE。词表和 merges 直接从 GGUF 读取;GPT-2 的 byte↔unicode 映射;用优先队列加双向链表做 O(n log n) 的 BPE 合并;33 个 added token(类型 3/4)作为字面量先匹配;增量 UTF-8 反分词(流式输出不会出现被截断的字符)。
 - `src/pretok.mm`:NFC 归一化和 Qwen 的 pre-tokenizer 正则(带 `\p{L}\p{M}\p{N}` 的 ICU 正则,通过 Foundation 的 `NSRegularExpression` 调用)。这是整个工程里唯一的 Objective-C++ 文件。
 - `src/chat.{h,cpp}`:Qwen3.8 chat template 中引擎需要的部分(system/user/assistant、`enable_thinking`、`reasoning_effort` 的 xhigh/medium/low、`<think>` 生成提示),以及采样器(llama.cpp 的默认链:top-k → top-p → min-p → temperature → 抽样;temperature≤0 为贪心)。
-- `src/cli.cpp`:`bonsai run`(单轮)、`bonsai chat`(多轮,复用 KV 缓存和 GDN 状态,每轮只 prefill 新增后缀)、`bonsai tokenize`。
+- `src/cli.cpp`:`kata run`(单轮)、`kata chat`(多轮,复用 KV 缓存和 GDN 状态,每轮只 prefill 新增后缀)、`kata tokenize`。
 - 短后缀(≤24 个 token)用逐 token 的 decode 而不是整套 prefill(prefill 有每次约 0.4~0.6 秒的固定权重展开开销)。
 
 ## 验证

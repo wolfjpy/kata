@@ -1,7 +1,7 @@
 // Shared device helpers: PTQ1_0 decoding and the 1024-point Walsh-Hadamard transform.
 #pragma once
 #include <metal_stdlib>
-#include "bonsai_m6.h"
+#include "kata_m6.h"
 using namespace metal;
 
 inline uint pow3(uint n) { return n == 0 ? 1u : n == 1 ? 3u : n == 2 ? 9u : n == 3 ? 27u : 81u; }

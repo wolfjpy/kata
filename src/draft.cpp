@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 
-using namespace bonsai;
+using namespace kata;
 
 static std::string blkName(const char* fmt, int il) { char b[96]; snprintf(b, sizeof b, fmt, il); return b; }
 
@@ -99,7 +99,7 @@ void Draft::materialise(Engine& eng, const void* tapsFp16, uint32_t n) {
     };
     auto rmsH = [&](MTL::Buffer* in, uint64_t wOff, MTL::Buffer* out) { uint32_t W = H; e->setComputePipelineState(eng.gpu.pipe("k_rmsnorm_rows_h"));
         e->setBuffer(in, 0, 0); e->setBuffer(wbuf, wOff, 1); e->setBuffer(out, 0, 2); e->setBytes(&W, 4, 3); e->dispatchThreadgroups(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); };
-    const bool dumpFc = getenv("BONSAI_DUMP_FC") != nullptr;
+    const bool dumpFc = getenv("KATA_DUMP_FC") != nullptr;
     mm(fc, catH, fcf, kTargets * H, H, false);                       // fc is Q4_K (25600 -> 5120)
     if (rotated) {   // c_t must be transformed in float: rmsnorm to a float buffer, then FWHT into the fp16 operand
         uint32_t W2 = H; e->setComputePipelineState(eng.gpu.pipe("k_rmsnorm_rows")); e->setBuffer(fcf, 0, 0); e->setBuffer(wbuf, encNorm, 1); e->setBuffer(cf, 0, 2); e->setBytes(&W2, 4, 3);
@@ -163,7 +163,7 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
         e->setBytes(&T, 4, 4); e->setBytes(&width, 4, 5); e->setBytes(&side, 4, 6); e->dispatchThreads(MTL::Size(width, T, 1), MTL::Size(128, 1, 1));
     };
     auto add = [&](MTL::Buffer* a, MTL::Buffer* b, MTL::Buffer* o, uint32_t n) { e->setComputePipelineState(eng.gpu.pipe("k_add3")); e->setBuffer(a, 0, 0); e->setBuffer(b, 0, 1); e->setBuffer(o, 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); };
-    const bool dbg = getenv("BONSAI_DBG_STAGE") != nullptr;
+    const bool dbg = getenv("KATA_DBG_STAGE") != nullptr;
     auto chk = [&](const char* name, MTL::Buffer* b, uint32_t nf) {
         if (!dbg) return;
         e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
@@ -292,7 +292,7 @@ uint32_t Draft::propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out, 
             }
             if (s > best) { best = s; bestI = c; }
         }
-        if (getenv("BONSAI_DBG_SEL") && p <= 2) { double ga = 0; for (int q = 0; q < 256; q++) ga += std::fabs(gate[(size_t)r * 256 + q]);
+        if (getenv("KATA_DBG_SEL") && p <= 2) { double ga = 0; for (int q = 0; q < 256; q++) ga += std::fabs(gate[(size_t)r * 256 + q]);
             fprintf(stderr, "  [sel] pos %u: unary0 %.3f, best %.3f, |gate|=%.1f, W_pred0 %.4f, W_succ0 %.4f\n", p, unary[r][0], best, ga,
                     bf(predW[(size_t)((prevIdx >= 0) ? cand[r-1][prevIdx] : anchorTok) * 256]), bf(succW[(size_t)cand[r][0] * 256])); }
         prevIdx = bestI; out[p - 1] = cand[r][bestI];

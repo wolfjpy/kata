@@ -13,7 +13,7 @@ extern "C" void dequantize_row_q2_K(const void*, float*, long long);
 extern "C" void dequantize_row_q3_K(const void*, float*, long long);
 extern "C" void dequantize_row_q4_K(const void*, float*, long long);
 int main(int argc, char** argv) {
-    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/bonsai.metallib")) return 1;
+    Gguf gg; if (!gg.open(argv[1])) return 1; Gpu gpu; if (!gpu.init("build/kata.metallib")) return 1;
     MTL::Buffer* wbuf = gpu.wrap(gg.map, gg.mapLen);
     struct Sh { const char* t; const char* label; int MT; } shs[] = {
         {"blk.0.ffn_gate.weight", "ffn_gate 5120->17408 Q4_K", 8}, {"blk.0.ffn_down.weight", "ffn_down 17408->5120 Q4_K", 8},

@@ -8,7 +8,7 @@
 2. **下载并校验模型**:`mannix/Bonsai-2-27B:mtp-ptq1_0`,6,397,969,920 字节,SHA-256 与 Ollama 的 blob 名一致(`174c9c65…`)。存放在仓库外 `../../models/`。
 3. **编译参考运行时**:Prism llama.cpp(Metal,Release),存放在仓库外 `../../refs/llama.cpp-prism`。
 4. **参考工具** `tools/ref_logits.cpp`:链接 Prism 的 libllama,对给定 token id 或文本导出每个位置的 logits、每层残差输出(`l_out-<il>`)、各层 norm/attention/FFN 输出,并支持贪心续写。构建:`make ref_logits`。
-5. **项目骨架**:`Makefile`(纯 make)、`config/bonsai_m6.h`(C++ 与 MSL 共用的编译期常量)、`third_party/metal-cpp`(固定版本)、`shaders/`、`src/`。已验证离线 Metal 工具链(`metal -std=metal4.1` → `metallib`)和共享头在 MSL 里能编译、kernel 在 GPU 上能运行。
+5. **项目骨架**:`Makefile`(纯 make)、`config/kata_m6.h`(C++ 与 MSL 共用的编译期常量)、`third_party/metal-cpp`(固定版本)、`shaders/`、`src/`。已验证离线 Metal 工具链(`metal -std=metal4.1` → `metallib`)和共享头在 MSL 里能编译、kernel 在 GPU 上能运行。
 6. **模型规格** `docs/MODEL_SPEC.md`:从 Prism 源码核实的精确公式(GDN 递推、attention、Hadamard 的顺序与置换、embedding 反向变换)。
 
 ## 基线(本机实测)

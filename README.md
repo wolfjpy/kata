@@ -1,6 +1,6 @@
-# Bonsai
+# Kata
 
-A from-scratch **Metal inference engine** for [Bonsai 2 27B](https://huggingface.co/prism-ml) — a 27B hybrid-attention
+A from-scratch **Metal inference engine** for [Bonsai-2-27B](https://huggingface.co/prism-ml) — a 27B hybrid-attention
 model whose weights are stored at **1.58 bits** (ternary ±1 with fp16 group scales) — running entirely on-device in a
 16 GB Apple laptop.
 
@@ -29,38 +29,38 @@ speculative-decoding head.
 - **Speculative decoding with the model's own MTP head** (blk.64, Q8_0): a one-token draft per step, verified in the
   same command buffer as the target forward, so a draft is never paid for twice.
 - **Prefix cache.** A prompt whose token prefix was seen before restores its complete state (KV, conv state, recurrence
-  state) from `~/.cache/bonsai` instead of prefilling it: a repeated 3.6K-token prompt goes from 18.6 s to 0.03 s, with
+  state) from `~/.cache/kata` instead of prefilling it: a repeated 3.6K-token prompt goes from 18.6 s to 0.03 s, with
   byte-identical output.
 - **A quality gate, not a vibe.** Every lossy switch is measured against the exact fp16 path with a KL / top-1 harness
-  (`bonsai kl-eval`), and switches that fail it are documented as failed instead of shipped.
+  (`kata kl-eval`), and switches that fail it are documented as failed instead of shipped.
 
 ## Quick start
 
 ```bash
 # 1. Build (Xcode command line tools, macOS 15+; Metal 4 / MPP needs a recent SDK)
-make            # builds build/bonsai, build/bonsai.metallib and the dev tools
+make            # builds build/kata, build/kata.metallib and the dev tools
 
 # 2. Get the model: a single GGUF (~6.4 GB), e.g.
-#    hf download prism-ml/Bonsai-2-27B-gguf bonsai-2-27b-mtp-ptq1_0.gguf --local-dir models/
+#    hf download prism-ml/Bonsai-2-27B-gguf Bonsai 2-mtp-ptq1_0.gguf --local-dir models/
 
 # 3. Run
-build/bonsai run --model models/bonsai-2-27b-mtp-ptq1_0.gguf \
+build/kata run --model models/Bonsai 2-mtp-ptq1_0.gguf \
                  --prompt "Explain why a delta-rule recurrence is cheaper than attention at inference." \
                  --max-tokens 256
 
 # 4. Interactive chat (streaming, thinking levels, prefix cache on by default)
-build/bonsai chat --model models/bonsai-2-27b-mtp-ptq1_0.gguf
+build/kata chat --model models/Bonsai 2-mtp-ptq1_0.gguf
 ```
 
 ## Usage
 
 ```
-bonsai run    --model M.gguf --prompt P [--system S] [--raw] [--no-think]
+kata run    --model M.gguf --prompt P [--system S] [--raw] [--no-think]
               [--effort xhigh|medium|low] [--temp T] [--top-k K] [--top-p P]
               [--max-tokens N] [--ctx N] [--no-spec] [--no-cache] [--exact]
-bonsai chat   --model M.gguf [same options]
-bonsai kl-eval --model M.gguf --file corpus.txt [--tokens N] [--save-ref R.bin | --ref R.bin]
-bonsai verify-check --model M.gguf ...
+kata chat   --model M.gguf [same options]
+kata kl-eval --model M.gguf --file corpus.txt [--tokens N] [--save-ref R.bin | --ref R.bin]
+kata verify-check --model M.gguf ...
 ```
 
 Quality / performance switches:
@@ -76,7 +76,31 @@ Quality / performance switches:
 
 ## Performance
 
-Apple M6, 16 GB, `--temp 0`, single run per row (measurements drift ±5% with thermal state).
+### Test machine
+
+| | |
+|---|---|
+| Machine | Apple M6, 16 GB unified memory (fanless laptop) |
+| OS / SDK | macOS 27.0.1, Xcode 27.1, SDK MacOSX27.0, Metal compiler 32023.921 (`metal4.1`) |
+| Model | `Bonsai-2-27B` PTQ1_0 + MTP head, GGUF 6,397,969,920 bytes, sha256 `174c9c6584e118766d5511e00a84fd8a31d146248915a726cfac8e6d140c6204` |
+| Kata build | this repository, `build/kata` + `build/kata.metallib` |
+| Baseline build | llama.cpp, Prism fork, branch `prism`, commit `b3ebc47c286e58ead5fc6abb3655974d3bcc1355`, `llama-bench` from the same tree |
+
+### Kata vs the llama.cpp reference (same machine, same GGUF)
+
+| Measurement | llama.cpp `b3ebc47` | Kata | Ratio |
+|---|---|---|---|
+| Prompt processing, 512 tokens (`pp512`) | 211.4 ± 4.8 tok/s | 240.1 tok/s (exact) · 243.4 (`--i8 ffn`) | **1.14×** |
+| Token generation, 128 tokens, plain autoregressive (`tg128`) | 17.2 ± 0.1 tok/s | 18.9 tok/s | **1.10×** |
+| Token generation, 128 tokens, Kata default (MTP speculation on) | — (no MTP in `llama-bench`) | 25.6 tok/s | 1.49× |
+| Prompt processing, 7.3K prompt | — (not run) | 227 tok/s (`--fast-ffn`) | — |
+
+Baseline and Kata both run the *same* 6.4 GB GGUF on the same machine, back to back. The `tg128` row is the fair
+like-for-like comparison (`llama-bench` is plain autoregressive; `build/kata --ids … --gen 128` is too). The third row
+is Kata's shipped default, which adds MTP speculative decoding on top: **1.35× over its own plain path, 1.49× over the
+baseline**. Numbers drift ±5% with thermal state on a fanless machine; run each three times and take the median.
+
+### Kata detail (all with `--temp 0`)
 
 | Workload | tok/s |
 |---|---|
@@ -87,9 +111,29 @@ Apple M6, 16 GB, `--temp 0`, single run per row (measurements drift ±5% with th
 | Decode, structured/greedy code | 31.6 |
 | Decode, 29K context | 18.4 |
 
-Decode is bound by streaming 2.4 GB of weights per token: at 25–31 tok/s the engine sustains roughly 70 GB/s of
-effective bandwidth, which is where the roofline for this model sits on a laptop memory system. Prefill is bound by the
-ALU cost of decoding 2-bit weights, not by bandwidth (`--fast-ffn` wins by shrinking the ALU work, not the bytes).
+### How to repeat it
+
+```bash
+M=models/bonsai-2-27b-mtp-ptq1_0.gguf
+
+# baseline: PP512 and TG128, 2 repetitions (mean ± sd is what llama-bench prints)
+llama-bench -m $M -p 512 -n 128 -r 2
+# -> pp512 211.42 ± 4.79 t/s | tg128 17.23 ± 0.11 t/s   (M6, build b3ebc47)
+
+# Kata: prefill of the same 512-token prompt, and 128 tokens plain autoregressive
+build/kata --model $M --ids "$(cat prompt512.ids)" --prefill --repeat 2
+# -> prefill (fp16 exact path) of 512 tokens: 2.132 s = 240.1 tok/s
+build/kata --model $M --ids "$(cat prompt512.ids)" --gen 128
+# -> 18.94 tok/s (52.8 ms/token)
+
+# Kata with speculation on (the default via the CLI)
+build/kata run --model $M --raw --file prompt512.txt --temp 0 --max-tokens 128 --no-cache
+# -> [prefill ... | decode 128 tokens in 5.00 s = 25.6 tok/s]
+```
+
+Decode is bound by streaming 6.4 GB of weights per token: at 25–31 tok/s the engine sustains roughly 160–200 GB/s of
+effective weight traffic, which is where the roofline for this model sits on a laptop memory system. Prefill is bound by
+the ALU cost of decoding 2-bit weights, not by bandwidth (`--fast-ffn` wins by shrinking the ALU work, not the bytes).
 
 ## Quality gates
 
@@ -98,11 +142,11 @@ over 3072 positions:
 
 ```bash
 # exact vs int8 prefill (single process, both paths)
-build/bonsai kl-eval --model $M --file corpus.txt --tokens 3072 --keep 256 --chunk 512
+build/kata kl-eval --model $M --file corpus.txt --tokens 3072 --keep 256 --chunk 512
 
 # a configuration that changes buffer layouts (e.g. int8 KV) needs two processes
-BONSAI_KV=fp16 build/bonsai kl-eval --model $M --file corpus.txt --save-ref ref.bin
-BONSAI_KV=int8 build/bonsai kl-eval --model $M --file corpus.txt --ref ref.bin
+KATA_KV=fp16 build/kata kl-eval --model $M --file corpus.txt --save-ref ref.bin
+KATA_KV=int8 build/kata kl-eval --model $M --file corpus.txt --ref ref.bin
 ```
 
 Current results: `--fast-ffn` 99.87% / 7.5e-5 ✅ · `--fast` 98.48% / 2.6e-3 ❌ · `--kv int8` **99.51% top-1** — one
@@ -110,7 +154,7 @@ scale per (position, KV head) covers 256 elements, so an outlier costs 1-2 effec
 quantisation was implemented and measured *worse* (99.37%), because a head's values are already near-symmetric; opt-in,
 not a default. (Its
 mean-KL looks alarming only because a few positions have reference logits around 1e6, where a 0.5% relative error is a
-5000-nat shift and the KL is meaningless; `BONSAI_KL_DBG=1` prints those positions.)
+5000-nat shift and the KL is meaningless; `KATA_KL_DBG=1` prints those positions.)
 Speculative decoding and the prefix cache are exact by construction and verified byte-identical.
 
 ## How it works
@@ -163,7 +207,7 @@ investigations, each with the measurement that justified the next step — inclu
 ## Requirements
 
 macOS on Apple Silicon with Metal 4 (MPP `matmul2d`), 16 GB of unified memory, Xcode command line tools. The engine
-targets one model (Bonsai 2 27B, PTQ1_0 + MTP head) and one machine class; the kernels are specialised for the model's
+targets one model (Bonsai-2-27B, PTQ1_0 + MTP head) and one machine class; the kernels are specialised for the model's
 shapes (hidden 5120, FFN 17408, 24 Q / 4 KV heads, vocab 248320) rather than general.
 
 ## References
@@ -171,8 +215,8 @@ shapes (hidden 5120, FFN 17408, 24 Q / 4 KV heads, vocab 248320) rather than gen
 This engine is a clean-room implementation, but it would not exist without these sources:
 
 **The model and its quantisation format**
-- Bonsai 2 27B (Prism) — model weights, config and the PTQ1_0 ternary quantisation format, plus the published
-  whitepaper describing the architecture (`docs/reference/bonsai-2-27b-whitepaper.pdf`).
+- Bonsai-2-27B (Prism) — model weights, config and the PTQ1_0 ternary quantisation format, plus the published
+  whitepaper describing the architecture (`docs/reference/Bonsai 2-whitepaper.pdf`).
 - `docs/MODEL_SPEC.md` — the architecture as verified against the reference implementation and per-layer logit dumps.
 
 **Reference implementation**
@@ -182,6 +226,15 @@ This engine is a clean-room implementation, but it would not exist without these
   dequantisation (`prism_ptq1_0_quant_dequant.c`), the Metal gated-DeltaNet kernel
   (`prism_metal_gated_delta_net.metal`) and the T=4 verification graph (`prism_qwen35_graph.cpp`). These were read as
   the specification for numerics; the kernels here are independently written.
+- [baseRT](https://github.com/basecompute/baseRT) — reference reading for the Metal 4 / Metal Performance Primitives
+  compute path (tensor ops, cooperative tensors, command-buffer structure).
+- [ninfer](https://github.com/Neroued/ninfer) — a from-scratch Metal inference engine; useful as an independent
+  comparison point for kernel structure and for what a hand-written Metal decoder costs in practice.
+- [Strata](https://github.com/Niko1221/Strata) — reference for the layered Metal kernel organisation and dispatch
+  patterns followed by `shaders/`.
+- [Qwen3.8-27B-DFlash2-GGUF](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF) — the DFlash2 block-diffusion
+  drafter weights used in the wide-window speculation experiments (`docs/reports/R2-dflash2-revisit.md`,
+  `docs/reports/M28c-draft-forward.md`), and the reference for that drafter's GGUF layout.
 
 **Apple / Metal**
 - *Metal Shading Language Specification* (Metal 4) — the authoritative reference for the language, `simdgroup_matrix`,

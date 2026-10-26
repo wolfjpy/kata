@@ -5,9 +5,9 @@
 kernel void k_embed(device const uchar* W [[buffer(0)]], device const int* tok [[buffer(1)]], device const float* sg [[buffer(2)]], device float* out [[buffer(3)]],
                     uint tgid [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
     threadgroup float xs[1024];
-    device const uchar* row = W + ulong(tok[0]) * ulong(bonsai::kHidden / bonsai::kGroup * bonsai::kBlockBytes);
+    device const uchar* row = W + ulong(tok[0]) * ulong(kata::kHidden / kata::kGroup * kata::kBlockBytes);
     uint i = tid * 4; uint g = i >> 7; uint e = i & 127u;
-    device const uchar* b = row + (tgid * 8 + g) * bonsai::kBlockBytes;
+    device const uchar* b = row + (tgid * 8 + g) * kata::kBlockBytes;
     float d = ptq1_scale(b);
     float4 v = float4(float(ptq1_elem(b, e)), float(ptq1_elem(b, e + 1)), float(ptq1_elem(b, e + 2)), float(ptq1_elem(b, e + 3))) * d;
     v = fwht1024(v, tid, lane, xs);
@@ -32,7 +32,7 @@ kernel void k_rms_fwht(device const float* src [[buffer(0)]], device const float
         if (lane == 0) part[sg] = ss;
         threadgroup_barrier(mem_flags::mem_threadgroup);
         float tot = 0.0f; for (uint s = 0; s < 8; s++) tot += part[s];
-        inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+        inv = rsqrt(tot / float(W) + kata::kRmsEps);
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     uint base = tgid * 1024 + tid * 4;
@@ -75,7 +75,7 @@ kernel void k_rmsnorm(device const float* src [[buffer(0)]], device const float*
     if (lane == 0) part[sg] = ss;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float tot = 0.0f; for (uint s = 0; s < 8; s++) tot += part[s];
-    float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+    float inv = rsqrt(tot / float(W) + kata::kRmsEps);
     for (uint i = tid; i < W; i += 256) out[i] = src[i] * inv * w[i];
 }
 
@@ -86,14 +86,14 @@ kernel void k_add_rms_fwht(device const float* x [[buffer(0)]], device const flo
                            uint tgid [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     // flags: bit0 = add y (else x only), bit1 = write plain h
     threadgroup float xs[1024]; threadgroup float part[8];
-    const uint W = bonsai::kHidden;
+    const uint W = kata::kHidden;
     float ss = 0.0f;
     for (uint i = tid; i < W; i += 256) { float v = x[i] + ((flags & 1u) ? y[i] : 0.0f); ss += v * v; }
     ss = simd_sum(ss);
     if (lane == 0) part[sg] = ss;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float tot = 0.0f; for (uint s = 0; s < 8; s++) tot += part[s];
-    float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+    float inv = rsqrt(tot / float(W) + kata::kRmsEps);
     threadgroup_barrier(mem_flags::mem_threadgroup);
     uint base = tgid * 1024 + tid * 4; float vals[4];
     for (uint r = 0; r < 4; r++) {

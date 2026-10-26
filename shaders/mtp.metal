@@ -40,19 +40,19 @@ kernel void k_rmsnorm_rows(device const float* src [[buffer(0)]], device const f
     ss = simd_sum(ss); if (lane == 0) part[sg] = ss;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float tot = 0.0f; for (uint k = 0; k < 8; k++) tot += part[k];
-    const float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+    const float inv = rsqrt(tot / float(W) + kata::kRmsEps);
     for (uint i = tid; i < W; i += 256) o[i] = s[i] * inv * w[i];
 }
 // MTP input: out[r] = [ RMSNorm(e[r]) * enorm | RMSNorm(h[r]) * hnorm ]  (10240 floats per row). Grid R, 256 threads.
 kernel void k_mtp_cat(device const float* e [[buffer(0)]], device const float* h [[buffer(1)]], device const float* enorm [[buffer(2)]], device const float* hnorm [[buffer(3)]], device float* out [[buffer(4)]],
                       uint r [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    threadgroup float part[16]; const uint W = bonsai::kHidden;
+    threadgroup float part[16]; const uint W = kata::kHidden;
     device const float* es = e + ulong(r) * W; device const float* hs = h + ulong(r) * W; device float* o = out + ulong(r) * 2 * W;
     float s1 = 0.0f, s2 = 0.0f; for (uint i = tid; i < W; i += 256) { s1 += es[i] * es[i]; s2 += hs[i] * hs[i]; }
     s1 = simd_sum(s1); s2 = simd_sum(s2); if (lane == 0) { part[sg] = s1; part[8 + sg] = s2; }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float t1 = 0.0f, t2 = 0.0f; for (uint k = 0; k < 8; k++) { t1 += part[k]; t2 += part[8 + k]; }
-    const float i1 = rsqrt(t1 / float(W) + bonsai::kRmsEps), i2 = rsqrt(t2 / float(W) + bonsai::kRmsEps);
+    const float i1 = rsqrt(t1 / float(W) + kata::kRmsEps), i2 = rsqrt(t2 / float(W) + kata::kRmsEps);
     for (uint i = tid; i < W; i += 256) { o[i] = es[i] * i1 * enorm[i]; o[W + i] = hs[i] * i2 * hnorm[i]; }
 }
 kernel void k_swiglu(device const float* g [[buffer(0)]], device const float* u [[buffer(1)]], device float* out [[buffer(2)]], constant uint& n [[buffer(3)]], uint i [[thread_position_in_grid]]) { if (i < n) out[i] = silu(g[i]) * u[i]; }
@@ -104,7 +104,7 @@ INSTH(4, 4, 2) INSTH(2, 4, 2) INSTH(1, 4, 2) INSTH(2, 8, 2) INSTH(4, 2, 2) INSTH
 // ---- GDN recurrence for T=2 tokens that leaves the INPUT state untouched and writes the state after token 0 to stateA and after token 1 to stateB ----
 kernel void k_gdn_rec_v2(device const float* conv [[buffer(0)]], device const float* qk [[buffer(1)]], device const float* gb [[buffer(2)]], device const float* stateIn [[buffer(3)]],
                          device float* stateA [[buffer(4)]], device float* stateB [[buffer(5)]], device float* raw [[buffer(6)]], uint2 tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
-    const uint hv = tg.x, cg = tg.y, hk = hv % bonsai::kGdnKHeads, part = lane & 3u, v = cg * 8u + (lane >> 2);
+    const uint hv = tg.x, cg = tg.y, hk = hv % kata::kGdnKHeads, part = lane & 3u, v = cg * 8u + (lane >> 2);
     const ulong off = ulong(hv) * 16384ul + ulong(part) * 32ul * 128ul + v;
     float st[32];
     for (uint k = 0; k < 32; k++) st[k] = stateIn[off + k * 128u];
@@ -115,7 +115,7 @@ kernel void k_gdn_rec_v2(device const float* conv [[buffer(0)]], device const fl
         float skv = 0.0f;
         for (uint k4 = 0; k4 < 8; k4++) { float4 kk = kp[k4]; st[4*k4] *= ge; st[4*k4+1] *= ge; st[4*k4+2] *= ge; st[4*k4+3] *= ge; skv += st[4*k4] * kk.x + st[4*k4+1] * kk.y + st[4*k4+2] * kk.z + st[4*k4+3] * kk.w; }
         skv += simd_shuffle_xor(skv, 1); skv += simd_shuffle_xor(skv, 2);
-        const float d = (conv[ulong(t) * bonsai::kGdnQkvDim + 4096u + hv * 128 + v] - skv) * beta;
+        const float d = (conv[ulong(t) * kata::kGdnQkvDim + 4096u + hv * 128 + v] - skv) * beta;
         float y = 0.0f;
         for (uint k4 = 0; k4 < 8; k4++) { float4 kk = kp[k4], qq = qp[k4]; st[4*k4] += kk.x * d; st[4*k4+1] += kk.y * d; st[4*k4+2] += kk.z * d; st[4*k4+3] += kk.w * d; y += st[4*k4] * qq.x + st[4*k4+1] * qq.y + st[4*k4+2] * qq.z + st[4*k4+3] * qq.w; }
         y += simd_shuffle_xor(y, 1); y += simd_shuffle_xor(y, 2);
@@ -127,7 +127,7 @@ kernel void k_gdn_rec_v2(device const float* conv [[buffer(0)]], device const fl
 // causal conv for the two verified tokens (reads the old conv state; writes the state after token 0 to newA and after token 1 to newB)
 kernel void k_gdn_conv_v2(device const float* qkv [[buffer(0)]], device const float* old [[buffer(1)]], device const float* w [[buffer(2)]], device float* out [[buffer(3)]],
                           device float* newA [[buffer(4)]], device float* newB [[buffer(5)]], uint c [[thread_position_in_grid]]) {
-    const uint C = bonsai::kGdnQkvDim; if (c >= C) return;
+    const uint C = kata::kGdnQkvDim; if (c >= C) return;
     const float o0 = old[c], o1 = old[C + c], o2 = old[2 * C + c], x0 = qkv[c], x1 = qkv[C + c];
     const float w0 = w[4 * c], w1 = w[4 * c + 1], w2 = w[4 * c + 2], w3 = w[4 * c + 3];
     out[c] = silu(w0 * o0 + w1 * o1 + w2 * o2 + w3 * x0);
@@ -140,13 +140,13 @@ kernel void k_gdn_conv_v2(device const float* qkv [[buffer(0)]], device const fl
 // out[r] = [ RMSNorm(e[r]) * enorm | RMSNorm(h[r]) * hnorm ] as half (10240 per row). Grid R, 256 threads.
 kernel void k_mtp_cat_h(device const float* e [[buffer(0)]], device const float* h [[buffer(1)]], device const float* enorm [[buffer(2)]], device const float* hnorm [[buffer(3)]], device half* out [[buffer(4)]],
                         uint r [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    threadgroup float part[16]; const uint W = bonsai::kHidden;
+    threadgroup float part[16]; const uint W = kata::kHidden;
     device const float* es = e + ulong(r) * W; device const float* hs = h + ulong(r) * W; device half* o = out + ulong(r) * 2 * W;
     float s1 = 0.0f, s2 = 0.0f; for (uint i = tid; i < W; i += 256) { s1 += es[i] * es[i]; s2 += hs[i] * hs[i]; }
     s1 = simd_sum(s1); s2 = simd_sum(s2); if (lane == 0) { part[sg] = s1; part[8 + sg] = s2; }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float t1 = 0.0f, t2 = 0.0f; for (uint k = 0; k < 8; k++) { t1 += part[k]; t2 += part[8 + k]; }
-    const float i1 = rsqrt(t1 / float(W) + bonsai::kRmsEps), i2 = rsqrt(t2 / float(W) + bonsai::kRmsEps);
+    const float i1 = rsqrt(t1 / float(W) + kata::kRmsEps), i2 = rsqrt(t2 / float(W) + kata::kRmsEps);
     for (uint i = tid; i < W; i += 256) { o[i] = half(es[i] * i1 * enorm[i]); o[W + i] = half(hs[i] * i2 * hnorm[i]); }
 }
 kernel void k_rmsnorm_rows_h(device const float* src [[buffer(0)]], device const float* w [[buffer(1)]], device half* out [[buffer(2)]], constant uint& W [[buffer(3)]],
@@ -156,7 +156,7 @@ kernel void k_rmsnorm_rows_h(device const float* src [[buffer(0)]], device const
     ss = simd_sum(ss); if (lane == 0) part[sg] = ss;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float tot = 0.0f; for (uint k = 0; k < 8; k++) tot += part[k];
-    const float inv = rsqrt(tot / float(W) + bonsai::kRmsEps);
+    const float inv = rsqrt(tot / float(W) + kata::kRmsEps);
     for (uint i = tid; i < W; i += 256) o[i] = half(s[i] * inv * w[i]);
 }
 // half hidden rows -> float rows (n elements)

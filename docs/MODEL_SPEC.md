@@ -107,7 +107,7 @@ logits = lm_head( shared_head_norm(z) )    # 与主干共用 output.weight(旋�
 
 ## 9. 验证状态
 
-**M2 已用数值对照全部验证**(`build/bonsai --ref-dir ... --ref-logits ...` 对 Prism llama.cpp 的逐层导出):
+**M2 已用数值对照全部验证**(`build/kata --ref-dir ... --ref-logits ...` 对 Prism llama.cpp 的逐层导出):
 - Hadamard 矩阵与符号向量的使用顺序;embedding 的反向变换 `s ⊙ (H z)`。
 - GDN:causal conv 的抽头顺序(最老的输入对应 `w[0]`)、q/k 的 L2 归一化(`x / max(||x||, 1e-6)`)、门控与递推、gated RMSNorm、`ssm_out` 输入的 tiled→grouped 头置换。
 - 全注意力:q/k 的逐头 RMSNorm、`[query|gate]` 交错布局、partial RoPE(前 64 维、配对 `(i, i+32)`、`theta_i = pos * 1e7^(-2i/64)`)、`1/sqrt(256)` 缩放、`sigmoid(gate)`(不是 swish)。

@@ -6,7 +6,7 @@
 #include <cstring>
 static void dump(const char* path, MTL::Buffer* b, size_t nbytes) { FILE* f = fopen(path, "wb"); fwrite(b->contents(), 1, nbytes, f); fclose(f); }
 int main(int argc, char** argv) {
-    Engine eng; if (!eng.load(argv[1], "build/bonsai.metallib", 4096, 0)) return 1;
+    Engine eng; if (!eng.load(argv[1], "build/kata.metallib", 4096, 0)) return 1;
     Draft d; if (!d.load(eng, argv[2])) return 1; eng.mtpTrack = false;
     MTL::Buffer* taps = eng.gpu.alloc(5 * 8 * 5120 * 2);
     // build a 16-token context through the wide path so the draft has something to attend to

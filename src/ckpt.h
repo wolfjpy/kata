@@ -10,7 +10,7 @@
 
 struct CacheConfig {
     bool enabled = true;
-    std::string dir;                        // default: $BONSAI_CACHE_DIR or ~/.cache/bonsai
+    std::string dir;                        // default: $KATA_CACHE_DIR or ~/.cache/kata
     uint64_t budgetBytes = 40ull << 30;     // least recently used checkpoints are deleted above this
     uint32_t minTokens = 2048;              // shorter prefixes are cheaper to recompute than to store
 };
@@ -41,7 +41,7 @@ private:
     void enforceBudget(const std::string& keep);
 };
 
-// the cache directory ($BONSAI_CACHE_DIR, else ~/.cache/bonsai), created if needed
+// the cache directory ($KATA_CACHE_DIR, else ~/.cache/kata), created if needed
 std::string defaultCacheDir();
-// bonsai cache: list (and optionally delete) the checkpoints of a directory without loading a model
+// kata cache: list (and optionally delete) the checkpoints of a directory without loading a model
 int listCacheDir(const std::string& dir, bool clear);
