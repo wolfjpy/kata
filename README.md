@@ -41,15 +41,15 @@ speculative-decoding head.
 make            # builds build/kata, build/kata.metallib and the dev tools
 
 # 2. Get the model: a single GGUF (~6.4 GB), e.g.
-#    hf download prism-ml/Bonsai-2-27B-gguf Bonsai 2-mtp-ptq1_0.gguf --local-dir models/
+#    hf download prism-ml/Bonsai-2-27B-gguf bonsai-2-27b-mtp-ptq1_0.gguf --local-dir models/
 
 # 3. Run
-build/kata run --model models/Bonsai 2-mtp-ptq1_0.gguf \
+build/kata run --model models/bonsai-2-27b-mtp-ptq1_0.gguf \
                  --prompt "Explain why a delta-rule recurrence is cheaper than attention at inference." \
                  --max-tokens 256
 
 # 4. Interactive chat (streaming, thinking levels, prefix cache on by default)
-build/kata chat --model models/Bonsai 2-mtp-ptq1_0.gguf
+build/kata chat --model models/bonsai-2-27b-mtp-ptq1_0.gguf
 ```
 
 ## Usage
@@ -216,7 +216,7 @@ This engine is a clean-room implementation, but it would not exist without these
 
 **The model and its quantisation format**
 - Bonsai-2-27B (Prism) — model weights, config and the PTQ1_0 ternary quantisation format, plus the published
-  whitepaper describing the architecture (`docs/reference/Bonsai 2-whitepaper.pdf`).
+  whitepaper describing the architecture (`docs/reference/bonsai-2-27b-whitepaper.pdf`).
 - `docs/MODEL_SPEC.md` — the architecture as verified against the reference implementation and per-layer logit dumps.
 
 **Reference implementation**
