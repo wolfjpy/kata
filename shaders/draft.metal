@@ -158,14 +158,16 @@ kernel void k_draft_qk(device const float* qin [[buffer(0)]], device const float
     xs[tid] = v * rsqrt(tot / 128.0f + 1e-6f) * w[tid];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float o = xs[tid];
-    if (tid < 32) {   // RoPE pair (i, i+32) over the first 64 dims
-        const float theta = float(pos) * pow(10000000.0f, -float(tid) / 32.0f);
-        const float c = cos(theta), s = sin(theta), a = xs[tid], b = xs[tid + 32];
+    // MROPE sections [64,0,0,0]: the sections sum to n_rot/2, so n_rot = 128 (the whole head), NEOX pairs (i, i+64),
+    // theta_i = pos * 1e7^(-2i/128). Threads 0..63 each produce one pair.
+    if (tid < 64) {
+        const float theta = float(pos) * pow(10000000.0f, -float(tid) / 64.0f);
+        const float c = cos(theta), s = sin(theta), a = xs[tid], b = xs[tid + 64];
         o = a * c - b * s;
         const float o2 = a * s + b * c;
-        if (isK) kring[ulong(pos) * (HKV * 128u) + hh * 128u + tid + 32] = half(o2); else qout[ulong(t) * (H * 128u) + hh * 128u + tid + 32] = o2;
+        if (isK) kring[ulong(pos) * (HKV * 128u) + hh * 128u + tid + 64] = half(o2); else qout[ulong(t) * (H * 128u) + hh * 128u + tid + 64] = o2;
     }
-    if (tid >= 64 || tid < 32) { if (isK) kring[ulong(pos) * (HKV * 128u) + hh * 128u + tid] = half(o); else qout[ulong(t) * (H * 128u) + hh * 128u + tid] = o; }
+    if (isK) kring[ulong(pos) * (HKV * 128u) + hh * 128u + tid] = half(o); else qout[ulong(t) * (H * 128u) + hh * 128u + tid] = o;
 }
 
 // Non-causal sliding-window attention over the ring: query row t (position pos0+t) attends to keys in [pos-2047, pos+W-1] that exist.
@@ -212,10 +214,10 @@ kernel void k_draft_ctx_kv(device const float* kproj [[buffer(0)]], device const
     xs[tid] = v * rsqrt(tot / 128.0f + 1e-6f) * knorm[tid];
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float o = xs[tid];
-    if (tid < 32) { const float theta = float(pos) * pow(10000000.0f, -float(tid) / 32.0f);
-        const float c = cos(theta), s = sin(theta), a = xs[tid], b = xs[tid + 32];
-        o = a * c - b * s; kring[ulong(row) * (HKV * 128u) + hh * 128u + tid + 32] = half(a * s + b * c); }
-    if (tid >= 64 || tid < 32) kring[ulong(row) * (HKV * 128u) + hh * 128u + tid] = half(o);
+    if (tid < 64) { const float theta = float(pos) * pow(10000000.0f, -float(tid) / 64.0f);
+        const float c = cos(theta), s = sin(theta), a = xs[tid], b = xs[tid + 64];
+        o = a * c - b * s; kring[ulong(row) * (HKV * 128u) + hh * 128u + tid + 64] = half(a * s + b * c); }
+    kring[ulong(row) * (HKV * 128u) + hh * 128u + tid] = half(o);
 }
 
 // float -> half conversion (activations handed to k_draft_mm and to the shared PTQ1_0 head).

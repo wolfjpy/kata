@@ -78,3 +78,7 @@ $(BUILD)/bench_draft: tools/bench_draft.cpp src/gguf.cpp src/gpu.cpp src/gguf.h 
 DRAFT_SRCS := tools/draft_probe.cpp src/draft.cpp src/engine.cpp src/gguf.cpp src/gpu.cpp src/tokenizer.cpp src/chat.cpp src/spec.cpp src/ckpt.cpp
 $(BUILD)/draft_probe: $(DRAFT_SRCS) src/draft.h src/engine.h src/gpu.h src/gguf.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(DRAFT_SRCS) $(BUILD)/pretok.o $(LDFLAGS) -o $@
+
+DUMP_SRCS := tools/dump_attn.cpp src/draft.cpp src/engine.cpp src/gguf.cpp src/gpu.cpp src/tokenizer.cpp src/chat.cpp src/spec.cpp src/ckpt.cpp
+$(BUILD)/dump_attn: $(DUMP_SRCS) src/draft.h src/engine.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(DUMP_SRCS) $(BUILD)/pretok.o $(LDFLAGS) -o $@

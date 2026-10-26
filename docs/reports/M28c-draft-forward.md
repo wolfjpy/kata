@@ -101,3 +101,31 @@ row 0 自洽只证明"恒等路径"(embedding → 5 层 → 共享词表头)能�
 4. 上下文 K/V 的写入位置(现在用 `frontier` 递增,已用非零计数确认覆盖)。
 
 下一轮建议直接做**一次 CPU 单层对照**(第 0 层、8 行、72 位置上下文,用 ggml 的 dequant + 纯 C++ 数学),逐缓冲比较 attention 的输出——这是唯一能在"上下文没被正确利用"这类问题上给出确定答案的方法。
+
+## 9. 逐算子验证结果(本轮的决定性工作)
+
+为了不再靠猜,我把 GPU 的中间量 dump 出来,用**独立实现**重算并比较(`tools/dump_attn.cpp` + `/tmp/fc_check.c`):
+
+| 算子 | 对照方法 | 结果 |
+|---|---|---|
+| `k_draft_mm`(Q4_K/Q6_K 矩阵乘) | ggml 的 `dequantize_row_q4_k/q6_K` + 双精度点积 | **通过**(fc: 0.027 = fp16 舍入;ffn_gate/down/q/conv_proj 均通过) |
+| `k_draft_conv`(动态分组卷积) | 纯 Python 按 `build_dflash2_conv` 的语义重算 | **通过**(最大差 0.0) |
+| `k_draft_attn`(非因果滑窗注意力) | 纯 Python 逐 key 在线 softmax(用 GPU 的 Q 与 ring) | **通过**(最大差 2e-6) |
+| `k_draft_qk`(逐头 RMSNorm + RoPE + ring 写入) | 由注意力的匹配间接验证(Q 与 ring 都被 CPU 正确使用) | **通过** |
+| `fc` + `encNorm`(上下文物化) | ggml dequant + 双精度 | **通过** |
+| 最终 norm + 共享头 | row 0 自洽(预测出 anchor) | **通过** |
+
+**所有算子都是对的,但端到端接受率只有约 5%**(模式提示上 6/7 正确)。这说明问题不在算子,而在**结构假设**。剩余嫌疑(按可能性):
+1. 目标残差 tap 的**层号**:GGUF 写 `[6,20,34,48,62]`,ninfer 文档写 `[5,19,33,47,61]`;两者实测差异很小(4.8% vs 4.8%),但都没有达到应有的水平;
+2. tap 的**残差位置**:现在取"mixer+FFN 之后"(ninfer 的合同),也可以试"仅 mixer 之后";
+3. **选择器**:现在用逐行 argmax(DFlash1 风格)。官方的 DFlash2 用 top-16 + rank-256 条件路径,可能显著优于逐行 argmax;
+4. 块内注意力的**掩码**(非因果 vs 块内因果)。
+
+## 10. 诊断工具(可复现)
+
+```
+make build/dump_attn                     # 把第 0 层的嵌入/Q/ring/注意力输出/卷积输入输出 dump 到 /tmp
+build/dump_attn ../../models/bonsai-2-27b-ptq1_0-src.gguf ../../models/drafters/dflash2-q4km.gguf
+BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_t(commit 之后写文件)
+```
+注意一个反复踩的坑:**诊断 dump 必须在 `waitUntilCompleted` 之后**(shared buffer 在编码阶段还没被 GPU 写),我曾两次因此读到旧数据、误判 `fc` 有错。

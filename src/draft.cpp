@@ -43,6 +43,7 @@ bool Draft::load(Engine& eng, const std::string& path) {
     q = eng.gpu.alloc(kBlock * kHeads * kHeadDim * 4); k = eng.gpu.alloc(kBlock * kKvHeads * kHeadDim * 4);
     v = eng.gpu.alloc(kBlock * kKvHeads * kHeadDim * 4); aout = eng.gpu.alloc(kBlock * kHeads * kHeadDim * 4);
     tmp = eng.gpu.alloc(kBlock * kH * 4); dyn = eng.gpu.alloc(kBlock * kConvProj * 4);
+    attnOut0 = eng.gpu.alloc(kBlock * kHeads * kHeadDim * 4); qOut0 = eng.gpu.alloc(kBlock * kHeads * kHeadDim * 4); convOut0 = eng.gpu.alloc(kBlock * kH * 4); convIn0 = eng.gpu.alloc(kBlock * kH * 4); convDyn0 = eng.gpu.alloc(kBlock * kConvProj * 4);
     fout = eng.gpu.alloc(kBlock * kFfn * 4); probs = eng.gpu.alloc(kBlock * kH * 2);
     tapsBuf = eng.gpu.alloc((size_t)kTargets * kNMax * kH * 2); tokbuf = eng.gpu.alloc(kBlock * 4);
     ok = true;
@@ -67,8 +68,12 @@ void Draft::materialise(Engine& eng, const void* tapsFp16, uint32_t n) {
     };
     auto rmsH = [&](MTL::Buffer* in, uint64_t wOff, MTL::Buffer* out) { uint32_t W = H; e->setComputePipelineState(eng.gpu.pipe("k_rmsnorm_rows_h"));
         e->setBuffer(in, 0, 0); e->setBuffer(wbuf, wOff, 1); e->setBuffer(out, 0, 2); e->setBytes(&W, 4, 3); e->dispatchThreadgroups(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); };
+    const bool dumpFc = getenv("BONSAI_DUMP_FC") != nullptr;
     mm(fc, catH, fcf, kTargets * H, H, false);                       // fc is Q4_K (25600 -> 5120)
     rmsH(fcf, encNorm, cH);
+    MTL::Buffer* dFcf = nullptr; MTL::Buffer* dCh = nullptr;
+    if (dumpFc) { dFcf = eng.gpu.alloc((size_t)n * H * 4); dCh = eng.gpu.alloc((size_t)n * H * 2);
+        uint32_t n1 = n * H; e->setComputePipelineState(eng.gpu.pipe("k_copy_f32")); e->setBuffer(fcf, 0, 0); e->setBuffer(dFcf, 0, 1); e->setBytes(&n1, 4, 2); e->dispatchThreads(MTL::Size(n1, 1, 1), MTL::Size(256, 1, 1)); }
     const uint32_t HKV = kKvHeads, ring = kRing;
     for (uint32_t il = 0; il < kLayers; il++) {
         mm(L[il].k, cH, kvf, H, HKV * kHeadDim, false);
@@ -80,6 +85,12 @@ void Draft::materialise(Engine& eng, const void* tapsFp16, uint32_t n) {
         e->dispatchThreadgroups(MTL::Size(2 * HKV, n, 1), MTL::Size(128, 1, 1)); (void)nog;
     }
     e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+    if (dumpFc) {   // after the GPU finished: valid snapshots of fc's output and of c_t
+        FILE* fa = fopen("/tmp/d_cat.bin", "wb"); fwrite(catH->contents(), 1, (size_t)n * kTargets * H * 2, fa); fclose(fa);
+        FILE* fb = fopen("/tmp/d_fcf.bin", "wb"); fwrite(dFcf->contents(), 1, (size_t)n * H * 4, fb); fclose(fb);
+        FILE* fc2 = fopen("/tmp/d_ch.bin", "wb"); fwrite(dCh->contents(), 1, (size_t)n * H * 2, fc2); fclose(fc2);
+        FILE* fd = fopen("/tmp/d_fcrows.bin", "wb"); fwrite((const uint8_t*)gg.bytes(fc), 1, (size_t)8 * 100 * 144, fd); fclose(fd);
+        FILE* fe = fopen("/tmp/d_ringk.bin", "wb"); fwrite((const uint8_t*)kbuf->contents(), 1, (size_t)n * 1024 * 2 * kLayers, fe); fclose(fe); }
     frontier += n;
 }
 
@@ -121,12 +132,21 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
     };
     eng.xEmbed(e, tokbuf, T, xA);                                    // plain embedding rows [8][5120]
     chk("embed", xA, T * H);
+    if (dbg) {   // per-row embedding magnitude: the mask rows all share one table row
+        e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
+        const float* px = (const float*)xA->contents(); fprintf(stderr, "  [embed rows]");
+        for (uint32_t r = 0; r < T; r++) { double s2 = 0; for (uint32_t i = 0; i < H; i++) s2 += std::fabs(px[r * H + i]); fprintf(stderr, " %.1f", s2); }
+        fprintf(stderr, "\n"); cb = eng.gpu.queue->commandBuffer(); e = cb->computeCommandEncoder(); }
     for (uint32_t il = 0; il < kLayers; il++) {
         const LayerW& w = L[il];
         rmsF(xA, w.attnNorm, nrmf); if (il == 0) chk("rms attnNorm", nrmf, T * H); f2h(nrmf, nrmH, T * H);
         mm(w.attnCp, nrmH, dyn, H, kConvProj, false);                 // dynamic coefficients from the normalised input
         if (il == 0) chk("dyn (conv proj)", dyn, T * kConvProj);
         conv(nrmf, dyn, w.attnCb, tmpA, H, 0);                        // side 0 (input side)
+        if (dumpLayer0 && il == 0) { const uint32_t n1 = T * H, n2 = T * kConvProj;
+            e->setComputePipelineState(eng.gpu.pipe("k_copy_f32")); e->setBuffer(tmpA, 0, 0); e->setBuffer(convOut0, 0, 1); e->setBytes(&n1, 4, 2); e->dispatchThreads(MTL::Size(n1, 1, 1), MTL::Size(256, 1, 1));
+            e->setBuffer(nrmf, 0, 0); e->setBuffer(convIn0, 0, 1); e->dispatchThreads(MTL::Size(n1, 1, 1), MTL::Size(256, 1, 1));
+            e->setBuffer(dyn, 0, 0); e->setBuffer(convDyn0, 0, 1); e->setBytes(&n2, 4, 2); e->dispatchThreads(MTL::Size(n2, 1, 1), MTL::Size(256, 1, 1)); }
         if (il == 0) chk("conv0 attn", tmpA, T * H);
         f2h(tmpA, nrmH, T * H);
         mm(w.q, nrmH, q, H, kHeads * kHeadDim, false);
@@ -145,6 +165,9 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
           e->setBytes(&win, 4, 8); e->setBytes(&ring, 4, 9);
           e->dispatchThreadgroups(MTL::Size(kHeads, T, 1), MTL::Size(128, 1, 1)); }
         if (il == 0) chk("attn out", tmpA, T * kHeads * kHeadDim);
+        if (dumpLayer0 && il == 0) { const uint32_t nc = T * kHeads * kHeadDim;   // GPU-side copies: the host cannot read before the command buffer runs
+            e->setComputePipelineState(eng.gpu.pipe("k_copy_f32")); e->setBuffer(tmpA, 0, 0); e->setBuffer(attnOut0, 0, 1); e->setBytes(&nc, 4, 2); e->dispatchThreads(MTL::Size(nc, 1, 1), MTL::Size(256, 1, 1));
+            e->setBuffer(aout, 0, 0); e->setBuffer(qOut0, 0, 1); e->dispatchThreads(MTL::Size(nc, 1, 1), MTL::Size(256, 1, 1)); }
         f2h(tmpA, aoutH, T * kHeads * kHeadDim);
         mm(w.o, aoutH, tmpA, kHeads * kHeadDim, H, false);
         if (il == 0) chk("conv1 in (wo out)", tmpA, T * H);            // attention output projection

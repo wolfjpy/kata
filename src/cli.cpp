@@ -291,7 +291,7 @@ int cmdDflashEval(int argc, char** argv) {
     }
     double promptSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     printf("prompt %zu tokens via 8-row windows in %.2f s; anchor %d at pos %u\n", X.size(), promptSec, anchor, pos);
-    uint64_t rounds = 0, accepted = 0, produced = 0; double roundSec = 0;
+    uint64_t rounds = 0, accepted = 0, produced = 0; double roundSec = 0, draftSec = 0;
     int d[8];
     if (getenv("BONSAI_DF_TRUTH")) {   // diagnostic: run the block with the true continuation in rows 1..7 instead of masks
         std::vector<int> truth; int a = anchor; uint32_t p2 = pos;
@@ -306,7 +306,9 @@ int cmdDflashEval(int argc, char** argv) {
         return 0;
     }
     for (int g = 0; g < gen; rounds++) {
+        auto dt0 = std::chrono::steady_clock::now();
         dr.forwardBlock(eng, anchor, pos, logits);                       // proposes rows 1..7
+        draftSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - dt0).count();
         if (rounds == 0) {   // self-consistency: row 0 sees the anchor at its own position, so it should predict the anchor itself
             const float* lg = (const float*)logits->contents(); double sa = 0; int nz = 0;
             for (int k = 0; k < V; k++) { sa += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
@@ -335,5 +337,6 @@ int cmdDflashEval(int argc, char** argv) {
     printf("DFlash2: %llu rounds, %llu tokens, %.2f tokens/round, %.1f%% drafts accepted, %.1f ms/round, %.1f tok/s\n",
            (unsigned long long)rounds, (unsigned long long)produced, (double)produced / rounds, 100.0 * accepted / (rounds * (T - 1)), 1e3 * roundSec / rounds,
            produced / (roundSec + 1e-9));
+    printf("  draft forward: %.1f ms/round, verify+commit+materialise: %.1f ms/round\n", 1e3 * draftSec / rounds, 1e3 * roundSec / rounds);
     return 0;
 }

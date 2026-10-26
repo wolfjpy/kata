@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
     struct Sh { const char* t; const char* label; int MT; } shs[] = {
         {"blk.0.ffn_gate.weight", "ffn_gate 5120->17408 Q4_K", 8}, {"blk.0.ffn_down.weight", "ffn_down 17408->5120 Q4_K", 8},
         {"blk.2.ffn_down.weight", "ffn_down 17408->5120 Q6_K", 8}, {"blk.0.attn_q.weight", "attn_q 5120->4096 Q4_K", 8},
-        {"blk.0.attn_conv_proj.weight", "conv_proj 5120->1280 Q4_K", 8}};
+        {"blk.0.attn_conv_proj.weight", "conv_proj 5120->1280 Q4_K", 8}, {"fc.weight", "fc 25600->5120 Q4_K", 8}};
     for (auto& sh : shs) {
         const GgufTensor& t = gg.tensor(sh.t); const uint32_t K = (uint32_t)t.dims[0], N = (uint32_t)t.dims[1];
         const bool q6 = t.type == GGML_Q6_K; const uint64_t rowBytes = t.nbytes / N;

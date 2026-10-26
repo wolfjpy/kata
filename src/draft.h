@@ -2,6 +2,7 @@
 #pragma once
 #include "engine.h"
 #include <cstdint>
+#include <cstdio>
 
 struct Draft {
     static constexpr uint32_t kLayers = 5, kH = 5120, kFfn = 17408, kHeads = 32, kKvHeads = 8, kHeadDim = 128;
@@ -35,6 +36,7 @@ struct Draft {
     // Materialises the context K/V for n (<= kBlock) positions starting at `frontier`; tapsFp16 is [tap][row][kH] fp16.
     void materialise(Engine& eng, const void* tapsFp16, uint32_t n);
     // One masked forward at position pos: anchor token + masks; writes the block's logits (kBlock x vocab) to `logitsOut`.
+    bool dumpLayer0 = false; MTL::Buffer* attnOut0 = nullptr; MTL::Buffer* qOut0 = nullptr; MTL::Buffer* convOut0 = nullptr; MTL::Buffer* convIn0 = nullptr; MTL::Buffer* convDyn0 = nullptr;   // diagnostic
     void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // writes kBlock x vocab logits (synchronous)
     void forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);   // diagnostic: explicit block rows
 private:
