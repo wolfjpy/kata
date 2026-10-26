@@ -234,11 +234,12 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
         MTL::Buffer* t = xA; xA = xB; xB = t;
         chk("x after layer", xA, T * H);
     }
-    // final RMSNorm with the draft's own output_norm, then the Hadamard basis of the shared PTQ1_0 head (sign vector only, no trunk gamma)
+    // final RMSNorm with the draft's own output_norm, then the Hadamard basis of the shared PTQ1_0 head. The ternary drafter has the sign
+    // vector folded into output_norm (config: signs_folded = output_norm, selector_hidden_cols), so the head gets the plain FWHT there.
     rmsF(xA, outNorm, nrmf);
-    if (!rotated) f2h(nrmf, selIn, T * H); else f2h(nrmf, selIn, T * H);   // selector_hidden is plain BF16 and not rotated: feed the unrotated final norm
+    f2h(nrmf, selIn, T * H);   // selector_hidden is BF16 and not rotated: it reads the unrotated final norm
     { uint32_t W = H, mode = 0;
-      e->setComputePipelineState(eng.gpu.pipe("k_rms_fwht_b")); e->setBuffer(nrmf, 0, 0); e->setBuffer(nrmf, 0, 1); e->setBuffer(eng.sign5120(), 0, 2); e->setBuffer(probs, 0, 3);
+      e->setComputePipelineState(eng.gpu.pipe("k_rms_fwht_b")); e->setBuffer(nrmf, 0, 0); e->setBuffer(nrmf, 0, 1); e->setBuffer(eng.sign5120(), 0, 2);   // the head always wants H(s . v); A/B showed outNorm does not carry the signs e->setBuffer(probs, 0, 3);
       e->setBytes(&W, 4, 4); e->setBytes(&mode, 4, 5); e->dispatchThreadgroups(MTL::Size(W / 1024, T, 1), MTL::Size(256, 1, 1)); }
     eng.xWideGemv(e, eng.offOutW(), probs, logitsOut, H, (uint32_t)kVocab, T);
     e->endEncoding(); cb->commit(); cb->waitUntilCompleted();
@@ -246,7 +247,7 @@ void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, M
 
 // DFlash2 selector. gate = selector_hidden (BF16, unrotated) x final-normed hidden; then per mask row the top-16 logits, the dual
 // codebooks gathered for the 16 successors and 16 predecessors, and a left-to-right conditional walk (greedy).
-uint32_t Draft::propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out) {
+uint32_t Draft::propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out, int32_t anchorTok) {
     const int V = (int)kVocab; const uint32_t T = kBlock;
     {   // gate projection on the GPU
         MTL::CommandBuffer* cb = eng.gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
@@ -283,14 +284,17 @@ uint32_t Draft::propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out) 
         float best = -INFINITY; int bestI = 0;
         for (int c = 0; c < TOP; c++) {
             float s = unary[r][c];
-            if (prevIdx >= 0) {   // rank-256 bilinear term: <W_pred[prev candidate id], g> * W_succ[cand id]
-                const int pid = cand[r - 1][prevIdx]; const ushort* pw = predW + (size_t)pid * 256; const ushort* sw = succW + (size_t)cand[r][c] * 256;
+            {   // rank-256 bilinear term: <W_pred[predecessor id], g> * W_succ[cand id]; the first position's predecessor is the anchor token
+                const int pid = (prevIdx >= 0) ? cand[r - 1][prevIdx] : anchorTok; const ushort* pw = predW + (size_t)pid * 256; const ushort* sw = succW + (size_t)cand[r][c] * 256;
                 const float* g = gate + (size_t)r * 256; float acc = 0.0f;
                 for (int rr = 0; rr < 256; rr++) acc += bf(pw[rr]) * g[rr] * bf(sw[rr]);
                 s += acc;
             }
             if (s > best) { best = s; bestI = c; }
         }
+        if (getenv("BONSAI_DBG_SEL") && p <= 2) { double ga = 0; for (int q = 0; q < 256; q++) ga += std::fabs(gate[(size_t)r * 256 + q]);
+            fprintf(stderr, "  [sel] pos %u: unary0 %.3f, best %.3f, |gate|=%.1f, W_pred0 %.4f, W_succ0 %.4f\n", p, unary[r][0], best, ga,
+                    bf(predW[(size_t)((prevIdx >= 0) ? cand[r-1][prevIdx] : anchorTok) * 256]), bf(succW[(size_t)cand[r][0] * 256])); }
         prevIdx = bestI; out[p - 1] = cand[r][bestI];
     }
     return Kd;

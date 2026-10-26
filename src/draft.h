@@ -45,7 +45,7 @@ struct Draft {
     bool dumpLayer0 = false; MTL::Buffer* attnOut0 = nullptr; MTL::Buffer* qOut0 = nullptr; MTL::Buffer* convOut0 = nullptr; MTL::Buffer* convIn0 = nullptr; MTL::Buffer* convDyn0 = nullptr;   // diagnostic
     // DFlash2 selector: per mask row take the top-16 candidates, score them with the rank-256 dual codebooks and walk one conditional path.
     // Writes K-1 proposal tokens (positions pos+1 .. pos+K-1) and returns how many were written.
-    uint32_t propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out);
+    uint32_t propose(Engine& eng, MTL::Buffer* logits, uint32_t K, int* out, int32_t anchorTok);
     void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // writes kBlock x vocab logits (synchronous)
     void forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);   // diagnostic: explicit block rows
 private:
