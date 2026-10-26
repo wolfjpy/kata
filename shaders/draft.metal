@@ -132,7 +132,8 @@ kernel void k_draft_conv(device const float* x [[buffer(0)]], device const float
     float acc = 0.0f;
     for (uint tap = 0; tap < 2u; tap++) {
         if (tap > t) break;
-        const float b = base[(side * 2u + tap) * W + c], d = dyn[ulong(t) * (nGroups * 4u) + (g * 2u + tap) * 2u + side];
+        // dynamic is [n_groups][kernel][2 sides][token] in ggml (group fastest), so the index is g + nGroups*(tap + 2*side)
+        const float b = base[(side * 2u + tap) * W + c], d = dyn[ulong(t) * (nGroups * 4u) + g + nGroups * (tap + 2u * side)];
         acc += (b + d) * x[ulong(t - tap) * W + c];
     }
     out[ulong(t) * W + c] = acc;

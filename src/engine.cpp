@@ -663,3 +663,10 @@ void Engine::xFinalNorm(MTL::ComputeCommandEncoder* e, MTL::Buffer* x, uint32_t 
     e->setBuffer(outXp, 0, 3); e->setBuffer(x, 0, 4); e->setBuffer(wbuf, outNorm, 5); e->setBuffer(x, 0, 6); e->setBytes(&flags, 4, 7);
     e->dispatchThreadgroups(MTL::Size(T, 1, 1), MTL::Size(256, 1, 1));
 }
+
+void Engine::xEmbedBlock(const int* toks, uint32_t T) {
+    memcpy(bufTok->contents(), toks, T * 4);
+    NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
+    MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
+    xEmbed(e, bufTok, T, bufXs[0]); e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); pool->release();
+}

@@ -268,6 +268,7 @@ int cmdDflashEval(int argc, char** argv) {
     if (model.empty() || draftPath.empty() || X.empty()) { fprintf(stderr, "usage: bonsai dflash-eval --model M --draft D.gguf --ids 1,2,3 [--gen N]\n"); return 1; }
     Engine eng; if (!eng.load(model, metallib, 8192, 0)) return 1;
     Draft dr; if (!dr.load(eng, draftPath)) return 1; eng.mtpTrack = false;
+    if (getenv("BONSAI_TAP_SHIFT")) { const int sh = atoi(getenv("BONSAI_TAP_SHIFT")); for (int i = 0; i < 5; i++) dr.targetLayers[i] += sh; }
     const int V = (int)bonsai::kVocab, T = (int)Draft::kBlock;
     MTL::Buffer* taps = eng.gpu.alloc(5 * 8 * 5120 * 2); MTL::Buffer* logits = eng.bufLogitsAllPublic();
     int am[8]; uint32_t pos = 0; int anchor = -1;
@@ -292,6 +293,18 @@ int cmdDflashEval(int argc, char** argv) {
     printf("prompt %zu tokens via 8-row windows in %.2f s; anchor %d at pos %u\n", X.size(), promptSec, anchor, pos);
     uint64_t rounds = 0, accepted = 0, produced = 0; double roundSec = 0;
     int d[8];
+    if (getenv("BONSAI_DF_TRUTH")) {   // diagnostic: run the block with the true continuation in rows 1..7 instead of masks
+        std::vector<int> truth; int a = anchor; uint32_t p2 = pos;
+        for (int i = 0; i < T; i++) { truth.push_back(a); a = eng.step(a, p2, -1, true); p2++; }
+        int amT[8]; eng.resetState();
+        for (uint32_t q2 = 0; q2 < pos; ) { const uint32_t n2 = std::min<uint32_t>(T, pos - q2); eng.verifyWide(X.data() + q2, n2, q2, amT, taps, dr.targetLayers, 5); eng.commitWide(n2); if (!getenv("BONSAI_NO_CTX")) dr.materialise(eng, taps->contents(), n2); q2 += n2; }
+        int tk[8]; for (int i = 0; i < T; i++) tk[i] = truth[(size_t)i];
+        eng.xEmbedBlock(tk, (uint32_t)T);
+        fprintf(stderr, "[truth] block inputs:"); for (int i = 0; i < T; i++) fprintf(stderr, " %d", tk[i]); fprintf(stderr, "\n");
+        dr.forwardBlockTruth(eng, tk, pos, logits, T);
+        fprintf(stderr, "[truth] row argmax:"); for (int i = 0; i < T; i++) fprintf(stderr, " %d(exp %d)", argmaxOf(i), i + 1 < T ? truth[(size_t)i + 1] : -1); fprintf(stderr, "\n");
+        return 0;
+    }
     for (int g = 0; g < gen; rounds++) {
         dr.forwardBlock(eng, anchor, pos, logits);                       // proposes rows 1..7
         if (rounds == 0) {   // self-consistency: row 0 sees the anchor at its own position, so it should predict the anchor itself

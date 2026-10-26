@@ -98,6 +98,7 @@ public:
     void xWideGemv(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t T) { dWide(e, off, xh, y, K, N, T); }
     MTL::Buffer* embedBuffer() { return bufXp; }        // fp16 staging the draft also uses for its own embeddings
     void xEmbed(MTL::ComputeCommandEncoder* e, MTL::Buffer* toks, uint32_t T, MTL::Buffer* outFloat);
+    void xEmbedBlock(const int* toks, uint32_t T);   // diagnostic hook: embeds T explicit tokens into bufXp
     void xFinalNorm(MTL::ComputeCommandEncoder* e, MTL::Buffer* x, uint32_t T, MTL::Buffer* outXp);   // outNorm + sign + FWHT into fp16 rows
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill

@@ -85,8 +85,16 @@ void Draft::materialise(Engine& eng, const void* tapsFp16, uint32_t n) {
 
 // One masked forward at position pos: [anchor, MASK x 7]; writes 8 x vocab logits (from the target's shared PTQ1_0 head).
 void Draft::forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut) {
-    const uint32_t T = kBlock, H = kH, HKV = kKvHeads;
-    { int32_t* tk = (int32_t*)tokbuf->contents(); tk[0] = anchor; for (uint32_t i = 1; i < T; i++) tk[i] = kMaskTok; }
+    int32_t tk[kBlock]; tk[0] = anchor; for (uint32_t i = 1; i < kBlock; i++) tk[i] = kMaskTok;
+    forwardBlockToks(eng, tk, pos, logitsOut, kBlock);
+}
+void Draft::forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T) {
+    int32_t tk[kBlock]; for (uint32_t i = 0; i < T; i++) tk[i] = toks[i];
+    forwardBlockToks(eng, tk, pos, logitsOut, T);
+}
+void Draft::forwardBlockToks(Engine& eng, const int32_t* toksIn, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T) {
+    const uint32_t H = kH, HKV = kKvHeads;
+    { int32_t* tk = (int32_t*)tokbuf->contents(); for (uint32_t i = 0; i < T; i++) tk[i] = toksIn[i]; }
     MTL::CommandBuffer* cb = eng.gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     auto mm = [&](uint64_t off, MTL::Buffer* a, MTL::Buffer* y, uint32_t K, uint32_t N, bool) {
         const bool q6 = isQ6(off);                                 // pick the decoder from the tensor's own type (Q4_K_M mixes Q4_K and Q6_K)

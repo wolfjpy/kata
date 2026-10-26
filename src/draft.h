@@ -36,4 +36,8 @@ struct Draft {
     void materialise(Engine& eng, const void* tapsFp16, uint32_t n);
     // One masked forward at position pos: anchor token + masks; writes the block's logits (kBlock x vocab) to `logitsOut`.
     void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // writes kBlock x vocab logits (synchronous)
+    void forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);   // diagnostic: explicit block rows
+private:
+    void forwardBlockToks(Engine& eng, const int32_t* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);
+public:
 };
