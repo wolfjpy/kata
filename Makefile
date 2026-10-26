@@ -67,3 +67,10 @@ $(BUILD)/weight_read_probe: tools/weight_read_probe.cpp src/gguf.cpp src/gpu.cpp
 
 $(BUILD)/bench_wide: tools/bench_wide.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/bench_wide.cpp src/gguf.cpp src/gpu.cpp $(LDFLAGS) -o $@
+
+REFDIR := $(abspath $(REF))/build/bin
+$(BUILD)/dq_probe: tools/dq_probe.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/dq_probe.cpp src/gguf.cpp src/gpu.cpp -L$(REFDIR) -lggml-base -Wl,-rpath,$(REFDIR) $(LDFLAGS) -o $@
+
+$(BUILD)/bench_draft: tools/bench_draft.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) tools/bench_draft.cpp src/gguf.cpp src/gpu.cpp -L$(REFDIR) -lggml-base -Wl,-rpath,$(REFDIR) $(LDFLAGS) -o $@

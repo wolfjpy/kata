@@ -1,0 +1,117 @@
+// DFlash2 draft model: Q4_K / Q6_K dequantisation (validated element by element against ggml's dequantize_row_q4_K/q6_K).
+#include <metal_stdlib>
+#include <metal_tensor>
+#include <MetalPerformancePrimitives/MetalPerformancePrimitives.h>
+using namespace metal;
+using namespace mpp::tensor_ops;
+
+// Q4_K: 256 weights per 144-byte super-block: half d, half dmin, 12 packed 6-bit (scale, min) pairs, 128 nibble bytes.
+inline void q4k_scale_min(uint j, device const uchar* q, thread uint& sc, thread uint& m) {
+    if (j < 4) { sc = q[j] & 63u; m = q[j + 4] & 63u; }
+    else { sc = (q[j + 4] & 0x0Fu) | ((q[j - 4] >> 6) << 4); m = (q[j + 4] >> 4) | ((q[j] >> 6) << 4); }
+}
+kernel void k_dq_q4k(device const uchar* src [[buffer(0)]], device float* dst [[buffer(1)]], constant uint& K [[buffer(2)]], constant uint& blkIdx [[buffer(3)]], uint e [[thread_position_in_grid]]) {
+    if (e >= 256u) return;
+    device const uchar* bp = src + ulong(blkIdx) * 144ul;
+    const float d = float(as_type<half>(*(device const ushort*)(bp + 0)));
+    const float dmin = float(as_type<half>(*(device const ushort*)(bp + 2)));
+    // element e: j = e / 64 (0..3) selects a 64-weight group; inside it the low nibbles are the first 32 weights, high nibbles the next 32
+    const uint j = e >> 6, l = e & 63u, sub = l >> 5, pos = j * 2u + sub;          // pos = 2*(j) + (0 for low nibble, 1 for high)
+    uint sc, m; q4k_scale_min(pos, bp + 4, sc, m);
+    // q pointer: groups of 64 weights consume 32 bytes; within a group the low/high nibble cover 32 weights each
+    const uint qbyte = (e >> 6) * 32u + (l & 31u);   // one 64-weight group consumes 32 nibble bytes
+    const uint nib = (sub == 0) ? (bp[16 + qbyte] & 0x0Fu) : (bp[16 + qbyte] >> 4);
+    dst[e] = d * float(sc) * float(nib) - dmin * float(m);
+}
+
+// Q6_K: 256 weights per 210-byte super-block: 128 ql, 64 qh, 16 int8 scales, half d.
+kernel void k_dq_q6k(device const uchar* src [[buffer(0)]], device float* dst [[buffer(1)]], constant uint& K [[buffer(2)]], constant uint& blkIdx [[buffer(3)]], uint e [[thread_position_in_grid]]) {
+    if (e >= 256u) return;
+    device const uchar* bp = src + ulong(blkIdx) * 210ul;
+    device const uchar* ql = bp; device const uchar* qh = bp + 128; device const char* sc = (device const char*)(bp + 192);
+    const float d = float(as_type<half>(*(device const ushort*)(bp + 208)));
+    // reference loop: n = 0,128; l = 0..31 producing y[l], y[l+32], y[l+64], y[l+96] with scales sc[is+0,2,4,6], is = l/16
+    const uint n = e >> 7, r = e & 127u;                    // which 128-half, and which of the 128 outputs
+    const uint l = r & 31u, q4 = r >> 5;                   // q4 = 0..3 -> y[l], y[l+32], y[l+64], y[l+96]
+    device const uchar* qln = ql + n * 64, * qhn = qh + n * 32; device const char* scn = sc + n * 8;
+    const uint is = l >> 4;
+    uint v;
+    if (q4 == 0) v = (qln[l] & 0x0Fu) | (((qhn[l] >> 0) & 3u) << 4);
+    else if (q4 == 1) v = (qln[l + 32] & 0x0Fu) | (((qhn[l] >> 2) & 3u) << 4);
+    else if (q4 == 2) v = (qln[l] >> 4) | (((qhn[l] >> 4) & 3u) << 4);
+    else v = (qln[l + 32] >> 4) | (((qhn[l] >> 6) & 3u) << 4);
+    const int qq = int(v) - 32;
+    dst[e] = d * float(scn[is + 2u * q4]) * float(qq);
+}
+
+// =====================================================================================================================
+// Draft matrix multiply: MT token rows (the block's 8 columns) x N output rows, Q4_K / Q6_K weights decoded once into a private fp16 tile and multiplied on the matrix unit.
+// Same tile geometry as k_wide: N rows per simdgroup, KC=128 weights per matmul2d call, NSG simdgroups per threadgroup, column-major tile with stride KC+8.
+// Q4_K job: one 16-byte piece of a 64-weight group = 16 low-nibble values (elements g*64 + 0..15) and 16 high-nibble values (elements g*64 + 32..47).
+template <int MT, int N, int NSG, bool Q6>
+kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buffer(1)]], device float* y [[buffer(2)]], constant uint& K [[buffer(3)]], constant uint& Nout [[buffer(4)]],
+                       uint tgid [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint tid [[thread_index_in_threadgroup]]) {
+    constexpr int KC = 128, LD = KC + 8;
+    threadgroup half Bt[NSG][N * LD];
+    const uint row0 = (tgid * NSG + sg) * N; if (row0 >= Nout) return;
+    const uint nblk = K / 256u;                                   // 256-weight super-blocks
+    constexpr auto desc = matmul2d_descriptor(MT, N, KC, false, true, false, matmul2d_descriptor::mode::multiply_accumulate);
+    matmul2d<desc, execution_simdgroup> op;
+    array<int, 2> sA = {1, int(K)}, sB = {1, LD};
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tA0(x, dextents<int32_t, 2>(KC, MT), sA);
+    tensor<threadgroup half, dextents<int32_t, 2>, tensor_inline> tB(&Bt[sg][0], dextents<int32_t, 2>(KC, N), sB);
+    auto cC = op.template get_destination_cooperative_tensor<decltype(tA0), decltype(tB), float>();
+    for (uint i = 0; i < cC.get_capacity(); i++) cC[i] = 0.0f;
+    const uint half1 = nblk * 2u;                                 // KC=128 chunks (two per super-block)
+    for (uint kc = 0; kc < half1; kc++) {
+        const uint sb = kc >> 1, halfSel = kc & 1u;               // super-block and which 128-weight half
+        if (!Q6) {
+            // Q4_K: 4 jobs per row per chunk (each 32 of the chunk's 128 weights); lanes: 32 = N rows x (32/N) jobs
+            constexpr uint JOBS_PER_ROW = 4, PER_LANE = (N * JOBS_PER_ROW) / 32u;
+            for (uint j = 0; j < PER_LANE; j++) {
+                const uint jobAll = lane + j * 32u, r = jobAll / JOBS_PER_ROW, jr = jobAll % JOBS_PER_ROW;   // r = row, jr = 32-weight piece
+                device const uchar* bp = W + (ulong(min(row0 + r, Nout - 1u)) * ulong(nblk) + sb) * 144ul;
+                const float d = float(as_type<half>(*(device const ushort*)(bp + 0))), dmin = float(as_type<half>(*(device const ushort*)(bp + 2)));
+                const uint g = halfSel * 2u + (jr >> 1), piece = (jr & 1u) * 16u;              // 64-weight group, and which 16 of its 32 bytes
+                uint sc, m, sc2, mh; q4k_scale_min(2u * g, bp + 4, sc, m); q4k_scale_min(2u * g + 1u, bp + 4, sc2, mh);   // low / high nibbles have separate scales
+                const uint4 v = *(device const uint4*)(bp + 16 + g * 32u + piece);
+                const uint w4[4] = {v.x, v.y, v.z, v.w};
+                threadgroup half* out = &Bt[sg][r * LD + (jr >> 1) * 64u];
+                const float d1 = d * float(sc), m1 = dmin * float(m), d2 = d * float(sc2), m2 = dmin * float(mh);
+                for (uint k = 0; k < 4; k++) {                                                    // 4 bytes -> 4 low + 4 high values
+                    half4 lo, hi; lo.x = half(d1 * float(w4[k] & 0x0Fu) - m1); lo.y = half(d1 * float((w4[k] >> 8) & 0x0Fu) - m1);
+                    lo.z = half(d1 * float((w4[k] >> 16) & 0x0Fu) - m1); lo.w = half(d1 * float((w4[k] >> 24) & 0x0Fu) - m1);
+                    hi.x = half(d2 * float((w4[k] >> 4) & 0x0Fu) - m2); hi.y = half(d2 * float((w4[k] >> 12) & 0x0Fu) - m2);
+                    hi.z = half(d2 * float((w4[k] >> 20) & 0x0Fu) - m2); hi.w = half(d2 * float((w4[k] >> 28) & 0x0Fu) - m2);
+                    *(threadgroup half4*)(out + piece + 4 * k) = lo;                              // elements g*64 + piece + 4k .. +3
+                    *(threadgroup half4*)(out + piece + 32 + 4 * k) = hi;                         // elements g*64 + 32 + piece + 4k .. +3
+                }
+            }
+        } else {
+            // Q6_K: one lane per (row, 16-element piece); decode element by element with the reference formula
+            constexpr uint PIECES = KC / 16;                          // 8 pieces of 16 elements per row per chunk
+            for (uint jobAll = lane; jobAll < N * PIECES; jobAll += 32u) {
+                const uint r = jobAll / PIECES, pc = jobAll % PIECES;
+                device const uchar* bp = W + (ulong(min(row0 + r, Nout - 1u)) * ulong(nblk) + sb) * 210ul;
+                const float d = float(as_type<half>(*(device const ushort*)(bp + 208)));
+                device const uchar* ql = bp; device const uchar* qh = bp + 128; device const char* sc = (device const char*)(bp + 192);
+                for (uint i = 0; i < 16; i++) {
+                    const uint e = halfSel * 128u + pc * 16u + i;      // element inside the super-block
+                    const uint n = e >> 7, rr = e & 127u, l = rr & 31u, q4 = rr >> 5, is = l >> 4;
+                    const uint b = (q4 == 0) ? (ql[n*64 + l] & 0x0Fu) | (((qh[n*32 + l] >> 0) & 3u) << 4)
+                                 : (q4 == 1) ? (ql[n*64 + l + 32] & 0x0Fu) | (((qh[n*32 + l] >> 2) & 3u) << 4)
+                                 : (q4 == 2) ? (ql[n*64 + l] >> 4) | (((qh[n*32 + l] >> 4) & 3u) << 4)
+                                             : (ql[n*64 + l + 32] >> 4) | (((qh[n*32 + l] >> 6) & 3u) << 4);
+                    Bt[sg][r * LD + pc * 16u + i] = half(d * float(sc[n*8 + is + 2u*q4]) * float(int(b) - 32));
+                }
+            }
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        tensor<device half, dextents<int32_t, 2>, tensor_inline> tA(x + kc * KC, dextents<int32_t, 2>(KC, MT), sA);
+        op.run(tA, tB, cC);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint i = 0; i < cC.get_capacity(); i++) if (cC.is_valid_element(i)) { auto ix = cC.get_multidimensional_index(i); const uint col = row0 + uint(ix[0]); if (col < Nout) y[ulong(ix[1]) * Nout + col] = cC[i]; }
+}
+#define DMM(MT, N, SG, Q6) template [[host_name("k_draft_mm_m" #MT "_n" #N "_g" #SG "_q" #Q6)]] kernel void k_draft_mm<MT, N, SG, Q6>(device const uchar*, device half*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
+DMM(8, 16, 4, false) DMM(8, 16, 4, true) DMM(16, 16, 4, false) DMM(16, 16, 4, true)

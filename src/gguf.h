@@ -17,7 +17,7 @@ struct GgufTensor {
 
 struct GgufArray { uint32_t elemType = 0; uint64_t count = 0; uint64_t payload = 0; /* absolute file offset of first element */ };
 
-enum GgmlType : uint32_t { GGML_F32 = 0, GGML_Q8_0 = 8, GGML_BF16 = 30, GGML_PTQ1_0 = 143 };
+enum GgmlType : uint32_t { GGML_F32 = 0, GGML_Q8_0 = 8, GGML_Q4_K = 12, GGML_Q6_K = 14, GGML_BF16 = 30, GGML_PTQ1_0 = 143 };
 
 struct Gguf {
     int fd = -1;
