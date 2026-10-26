@@ -64,7 +64,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
         if (a == "--model") model = nx(); else if (a == "--prompt") prompt = nx(); else if (a == "--file") { prompt = readFile(argv[++i]); haveFile = true; } else if (a == "--system") system = nx(); else if (a == "--raw") raw = true;
         else if (a == "--no-think") noThink = true; else if (a == "--effort") effort = nx(); else if (a == "--max-tokens") maxTokens = atoi(nx().c_str()); else if (a == "--ctx") ctx = (uint32_t)atoi(nx().c_str());
         else if (a == "--temp") sp.temp = (float)atof(nx().c_str()); else if (a == "--top-k") sp.topK = atoi(nx().c_str()); else if (a == "--top-p") sp.topP = (float)atof(nx().c_str()); else if (a == "--min-p") sp.minP = (float)atof(nx().c_str());
-        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") i8spec = "all"; else if (a == "--fast-ffn") i8spec = "ffn"; else if (a == "--i8") i8spec = nx(); else if (a == "--exact") i8spec = ""; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--mtp-chain") chain = true; else if (a == "--no-chain") chain = false; else if (a == "--chain-depth3") { chain = true; chainFixed = true; } else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
+        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") i8spec = "all"; else if (a == "--fast-ffn") i8spec = "ffn"; else if (a == "--i8") i8spec = nx(); else if (a == "--exact") i8spec = ""; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
     }
     if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: bonsai run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       bonsai chat --model M.gguf [same options]\n"); return 1; }
     Session S; S.ctx = ctx; S.fast = !i8spec.empty();
@@ -79,9 +79,7 @@ int cmdRun(int argc, char** argv, bool interactive) {
         (void)first; unfed = -1;
         if (spec) {   // MTP speculative decoding (exact: the output distribution is unchanged)
             auto t0 = std::chrono::steady_clock::now(); size_t before = gen.size();
-            SpecResult r = chain ? specGenerateChain(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, [&](int t) {
-                gen.push_back(t); if (S.tok.isEog(t)) return; std::string s = dt.push(t); if (!s.empty()) { fputs(s.c_str(), stdout); fflush(stdout); } }, &sst, !chainFixed)
-                            : specGenerate(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, [&](int t) {
+            SpecResult r = specGenerate(S.eng, S.pos, S.ctx, maxTokens, sp, rng, [&](int t) { return S.tok.isEog(t); }, [&](int t) {
                 gen.push_back(t); if (S.tok.isEog(t)) return; std::string s = dt.push(t); if (!s.empty()) { fputs(s.c_str(), stdout); fflush(stdout); } }, &sst);
             S.pos = r.pos; unfed = r.unfed; nOut += (int)(gen.size() - before);
             decSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

@@ -365,8 +365,8 @@ int Engine::mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0
     { uint32_t n = R * kFfn; e->setComputePipelineState(gpu.pipe("k_swiglu")); e->setBuffer(mG, 0, 0); e->setBuffer(mU, 0, 1); e->setBuffer(mG, 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
     gq(mtp.ffnDown, mG, mTmp, kFfn, H);
     add(mTmp, mY, mX, R * H);                         // FFN residual -> block output (mX reused)
-    {   // the chained draft's next-step input is output_norm of that residual (the trunk's h convention), not the raw block output
-        uint32_t w = 5120; e->setComputePipelineState(gpu.pipe("k_rmsnorm_rows_h")); e->setBuffer(mX, (uint64_t)(R - 1) * H * 4, 0); e->setBuffer(wbuf, outNorm, 1); e->setBuffer(mHz, 0, 2);
+    {   // llama.cpp's chain: the next step's hidden input is h_nextn = RMSNorm(block output, nextn.shared_head_norm) (NOT the trunk's output_norm)
+        uint32_t w = 5120; e->setComputePipelineState(gpu.pipe("k_rmsnorm_rows_h")); e->setBuffer(mX, (uint64_t)(R - 1) * H * 4, 0); e->setBuffer(wbuf, mtp.headNorm, 1); e->setBuffer(mHz, 0, 2);
         e->setBytes(&w, 4, 3); e->dispatchThreadgroups(MTL::Size(1, 1, 1), MTL::Size(256, 1, 1)); }
     if (wantLogits) {
         uint32_t flags = 0; const uint64_t rowOff = (uint64_t)(R - 1) * H * 4;

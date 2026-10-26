@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
             int next = eng.logits() ? 0 : 0; { const float* lg = eng.logits(); for (int k = 1; k < (int)nv; k++) if (lg[k] > lg[next]) next = k; }
             uint32_t pos = (uint32_t)seq.size(); int base = next; auto t0 = std::chrono::steady_clock::now();
             for (int g = 0; g < gen; g++) {
-                int win[Engine::kMaxVerify]; win[0] = next; for (int k = 1; k < T; k++) win[k] = next;   // dummy drafts (accepted prefix is always 1 here)
+                int win[Engine::kMaxVerify]; win[0] = next; for (int k = 1; k < T; k++) win[k] = 1000 + k;   // dummy drafts: distinct, so a permuted token row in the GEMV would show up
                 if (getenv("BONSAI_USE_V2")) { int vt[2] = {win[0], win[0]}; eng.verify2(vt, pos, am); } else eng.verifyWide(win, (uint32_t)T, pos, am);
                 if (g == 0) { for (int k = 1; k < (int)nv; k++) if (eng.verifyLogits(0)[k] > eng.verifyLogits(0)[base]) base = k; }
                 printf("gen[%d] = %d\n", g, am[0]); fflush(stdout);

@@ -67,8 +67,9 @@ SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTok
     ds[0].ms = 67.0; ds[1].ms = 113.0;   // measured round costs, so the policy starts with honest numbers
     int emitted = 0; SpecResult res; res.pos = n; res.unfed = -1;
     std::vector<int> win(5);
+    bool firstRound = true;
     while (true) {
-        emit(next); emitted++; st.tokens++;
+        if (firstRound) { emit(next); emitted++; st.tokens++; firstRound = false; }   // the anchor is emitted once, before the first round
         if (isEog(next) || emitted >= maxTokens || n + 5 >= ctx) { res.unfed = next; eng.setHPrev(hPrev.data()); res.pos = n; return res; }
         // ---- pick the depth
         int slot = getenv("BONSAI_CHAIN_D1") ? 0 : 1;
@@ -107,9 +108,11 @@ SpecResult specGenerateChain(Engine& eng, uint32_t pos, uint32_t ctx, int maxTok
         for (int j = 0; j < (int)d; j++) if (j <= matched) D.p[j] = 0.8 * D.p[j] + 0.2 * (j < matched ? 1.0 : 0.0);
         D.ms = 0.8 * D.ms + 0.2 * (1e3 * (since(t0) + 0.0));
         st.accepted += (uint64_t)matched;
-        for (uint32_t j = 0; j < F && emitted < maxTokens; j++) { emit(win[(size_t)j]); emitted++; st.tokens++; }
+        for (uint32_t j = 1; j < F && emitted < maxTokens; j++) { emit(win[(size_t)j]); emitted++; st.tokens++; }   // the accepted drafts
+        if (emitted < maxTokens) { emit(nextTok); emitted++; st.tokens++; }                                          // the correction / bonus token
         { std::vector<float> hh(H); if (fastDepth1) memcpy(hh.data(), eng.hidden(), (size_t)H * 4); else eng.verifyHidden(F - 1, hh.data()); hPrev = hh; }
         next = nextTok; n += F;
+        if (getenv("BONSAI_DBG_CHAIN") && ds[1].n > 0) fprintf(stderr, "  [chain] d3: p1 %.3f p2 %.3f p3 %.3f | d1: p1 %.3f (n %d/%d)\n", ds[1].p[0], ds[1].p[1], ds[1].p[2], ds[0].p[0], ds[1].n, ds[0].n);
         if (emitted >= maxTokens) { res.unfed = -1; res.pos = n; return res; }
     }
 }

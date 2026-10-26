@@ -189,3 +189,40 @@ BONSAI_DUMP_FC=1 ...                     # 另外 dump fc 的输入/输出与 c_
 **链式目前是负收益**:因为 d_2/d_3 的逐位置接受率只有约 0.4/0.15,而 Prism 的 MTP 链在同一模型上是 0.8/0.7(实测 3.13 token/轮)。根因是**h 代理的质量**:链式第二步必须用"目标在位置 n 的隐状态"的估计,我用 MTP 块自己的输出(并对它做了 `output_norm`),但接受率对这一步不敏感(改归一化前后 47.7% → 48.4%),说明 h 代理不是唯一问题。已把默认回退到深度 1,链式保留为 `--mtp-chain` 可选。
 
 **结论**:要拿到 +10~20%,必须先让链式草稿的 d_2/d_3 达到 Prism 的水平(0.8/0.7)。下一步应直接读 llama.cpp 的 `llama_mtp_chain`(mtp.cpp)看它第二步到底喂什么(是 h 还是 `h + token` 的某种融合,以及是否重算归一化),而不是继续猜。
+
+## 15. 读 llama.cpp 的 MTP 链(按用户要求)与结论
+
+**读到的精确语义**(`src/models/qwen35.cpp` 的 chain graph,`n_steps` 个 step 全在一个 `llama_decode` 里):
+
+```
+step s (s = 0: catch-up 行; s >= 1: 一行, 位置 r0 = n_lead-1+s):
+    h_norm = RMSNorm(h, nextn.hnorm)          # h 是上一步的 h_nextn(step 0 是主干的 h)
+    e_norm = RMSNorm(embed(argmax_token), nextn.enorm)
+    cur    = eh_proj @ [e_norm | h_norm]
+    cur    = attn(...) * sigmoid(gate) -> wo -> +cur
+    cur    = ffn(RMSNorm(cur, attn_post_norm)) + cur
+    h_nextn = RMSNorm(cur, head_norm_w)       # head_norm_w = nextn.shared_head_norm(不是主干 output_norm!)= 下一步的 h
+    下一步的 token = argmax(head(h_nextn))
+```
+以及:MTP 缓存按位置顺序写;草稿是**贪心**(argmax),不是采样器给的 token。
+
+**据此修正的两处**:
+1. 链式下一步的 h 之前用的是主干的 `output_norm`,改成 `nextn.shared_head_norm` ✓(与 llama.cpp 一致)。
+2. 修掉链式循环**把 anchor 重复发一遍**的 bug(导致"160 token"里含 64 个重复)。
+
+**但链式仍然不可用**,而且暴露出更多问题:
+
+| 指标 | 深度 1(默认) | 链式深度 3 |
+|---|---|---|
+| 推理文本 tok/s | **29.3** | 12.8(修 emit 后) |
+| 首位置接受率 p1 | 0.905 | 0.40–0.50 |
+| 提交的 token 序列 | 与普通贪心逐 token 一致 | **错的**(周期模式 `A B A B C B`,应为 `A B C A B C`) |
+
+关键异常:**同一个第一份草稿,在深度 1 路径下接受率 0.9,在链式路径下只有 0.4**。已排除:
+- T=4 的 ALU 验证:`--vwidth 4` 用**互不相同**的假草稿(能查出 token 行错位)仍逐 token 复现贪心 ✓;
+- h 的归一化(shared_head_norm vs output_norm)✓ 已改,数字没动;
+- 草稿调用本身(同一 `mtpRows(1, ...)`)✓。
+
+所以问题在链式循环的**状态/提交记账**(它也解释了为什么提交序列是错的)。这条路径已从 CLI 撤下(`--mtp-chain` 移除),代码与本节记录保留,供下一轮定位;默认仍是深度 1。
+
+**结论**:用户要求的第 1 条(推广 ALU 验证 + MTP 链 + 自适应深度)里,**ALU 验证基础设施完成并验证通过**(T=2/4/8 三条路径、9 种形状扫描),但**链式草稿有记账 bug 未解决**,因此没有采用。要拿到推理文本的 +10~20%,下一步应查链式循环的 `commitWide`/`encMtpKv`/`nextTok` 记账(而不是草稿本身)。
