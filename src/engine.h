@@ -87,6 +87,14 @@ public:
     int verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut);   // returns the greedy argmax of row T-1 (all T rows' logits stay in verifyLogits(row))
     void commitWide(uint32_t accept);                                            // keep the snapshot after `accept` tokens and make the MTP cache current
     const _Float16* verifyHiddenRow(uint32_t row) const { return (const _Float16*)pHh->contents() + (size_t)row * bonsai::kHidden; }
+    // ---- thin wrappers the DFlash2 draft needs from the trunk (its embedding, its shared lm_head, its folded output norm)
+    MTL::Buffer* weightsBuffer() const { return wbuf; }
+    uint64_t offTokEmbd() const { return tokEmbd; }
+    uint64_t offOutW() const { return outW; }
+    uint64_t offOutNormGs() const { return (uint64_t)(bonsai::kLayers * 2) * bonsai::kHidden * 4; }
+    MTL::Buffer* gsBuffer() const { return gsAll; }
+    MTL::Buffer* sign5120() const { return sg5120; }
+    void xWideGemv(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t T) { dWide(e, off, xh, y, K, N, T); }
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }

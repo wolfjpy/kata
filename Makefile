@@ -74,3 +74,7 @@ $(BUILD)/dq_probe: tools/dq_probe.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gp
 
 $(BUILD)/bench_draft: tools/bench_draft.cpp src/gguf.cpp src/gpu.cpp src/gguf.h src/gpu.h | $(BUILD)
 	$(CXX) $(CXXFLAGS) tools/bench_draft.cpp src/gguf.cpp src/gpu.cpp -L$(REFDIR) -lggml-base -Wl,-rpath,$(REFDIR) $(LDFLAGS) -o $@
+
+DRAFT_SRCS := tools/draft_probe.cpp src/draft.cpp src/engine.cpp src/gguf.cpp src/gpu.cpp src/tokenizer.cpp src/chat.cpp src/spec.cpp src/ckpt.cpp
+$(BUILD)/draft_probe: $(DRAFT_SRCS) src/draft.h src/engine.h src/gpu.h src/gguf.h | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(DRAFT_SRCS) $(BUILD)/pretok.o $(LDFLAGS) -o $@

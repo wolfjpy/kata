@@ -51,7 +51,8 @@ DFlash2 K=7 的实测接受长度(Prism harness,Bonsai 目标模型):代码/推�
 | **M27a** ✅ 完成(`reports/M27a-small-grid-fixes.md`) | 三处修复:alpha/beta 改 T 行 GEMV、注意力改 key 分段、状态快照改记录+重放(省 1.2 GB) | **T=8 每轮 142 ms(原 177,−20%)**;逐 token 复现贪心;DFlash2 收益上限升到 **+38%** |
 | **M27b** | MTP 链草稿(K=3 → T=4,零新模型):用 MTP 块自己的输出 hidden 作为下一行的输入,MTP 块内串行 3 次 | 推理文本 ≥ 3.1 token/轮(Prism 实测值);端到端 ≥ 28 tok/s,`verifyWide` 路径不变 |
 | **M28a** ✅ 完成(`reports/M28a-draft-loading-and-quant.md`) | 草稿加载 + Q4_K/Q6_K 解码(与 ggml **逐位一致**,258 048 元素差 0.0)+ 草稿矩阵乘(Q4_K 78–118 GB/s) | 草稿一轮约 21 ms(Q6_K 向量化后 15 ms);DFlash2 收益修正为 **+28~32%** |
-| **M28b** | DFlash2 移植(剩余 ~1.5–2 天):5 层草稿(plain RMSNorm、QKV、逐头 qk norm、scalar RoPE、非因果滑窗 2048 环形 KV、双抽头动态分组卷积、SwiGLU)+ 目标第 5/19/33/47/61 层残差作条件 + 上下文物化器 + top-16/rank-256 选择器 + **Q4_K_M 解量化**;先只支持 K=7 | 接受长度与 llama.cpp `draft-dflash` 一致(±0.3);代码/推理 ≥ 29 tok/s(现在)、≥ 33(修完 M27a);散文不回归(需要 M29) |
+| **M28b** ✅ 完成(`reports/M28b-draft-module.md`) | Q6_K 向量化(17→73.5 GB/s)+ 草稿全部算子(conv/qk/attn/ctx_kv/矩阵乘)+ 加载器与环形缓冲(80 MB) | 草稿一轮 **14 ms**;缺口只剩"装配 5 层前向 + 选择器 + spec 集成" |
+| **M28c** | 装配 `materialise`/`forwardBlock`、提案(argmax 先行、选择器随后)、spec 集成、接受率对齐 | ≥31 tok/s(代码/推理),接受长度与 Prism 差 ≤ 0.3 |:5 层草稿(plain RMSNorm、QKV、逐头 qk norm、scalar RoPE、非因果滑窗 2048 环形 KV、双抽头动态分组卷积、SwiGLU)+ 目标第 5/19/33/47/61 层残差作条件 + 上下文物化器 + top-16/rank-256 选择器 + **Q4_K_M 解量化**;先只支持 K=7 | 接受长度与 llama.cpp `draft-dflash` 一致(±0.3);代码/推理 ≥ 29 tok/s(现在)、≥ 33(修完 M27a);散文不回归(需要 M29) |
 | **M29** | 宽度自适应:在线 EMA 学每个宽度的 token/ms,散文自动退回 MTP-1 | 散文 ≥ 24 tok/s;代码/推理不回退 |
 | **M30** | (可选)宽内核的寄存器 B 操作数 + 权重重排 | r ≤ 2.0 → 代码 +40% |
 
