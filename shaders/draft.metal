@@ -148,7 +148,7 @@ kernel void k_draft_qk(device const float* qin [[buffer(0)]], device const float
     if (h >= H + HKV) {   // V head: copy straight into the ring (no norm, no rope)
         const uint vh = h - (H + HKV); vring[ulong(pos) * (HKV * 128u) + vh * 128u + tid] = half(vin[ulong(t) * (HKV * 128u) + vh * 128u + tid]); return;
     }
-    const bool isK = h >= H + HKV; const uint hh = isK ? h - (H + HKV) : h;
+    const bool isK = h >= H; const uint hh = isK ? h - H : h;   // [0,H) = Q, [H, H+HKV) = K, [H+HKV, H+2*HKV) = V
     device const float* src = isK ? kin : qin; device const float* w = isK ? knorm : qnorm;
     const float v = src[ulong(t) * ((isK ? HKV : H) * 128u) + hh * 128u + tid];
     float ss = simd_sum(v * v); if (lane == 0) part[sg] = ss;

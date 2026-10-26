@@ -276,7 +276,17 @@ int cmdDflashEval(int argc, char** argv) {
     while (pos < (uint32_t)X.size()) {   // prompt: 8-token verification windows, then materialise the draft context
         const uint32_t n = std::min<uint32_t>(T, (uint32_t)X.size() - pos);
         eng.verifyWide(X.data() + pos, n, pos, am, taps, dr.targetLayers, 5);
-        eng.commitWide(n); dr.materialise(eng, taps->contents(), n); pos += n; anchor = am[n - 1];
+        eng.commitWide(n);
+        if (getenv("BONSAI_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
+        else if (!getenv("BONSAI_NO_CTX")) { dr.materialise(eng, taps->contents(), n);
+            if (getenv("BONSAI_DBG_CTX")) { const _Float16* tp = (const _Float16*)taps->contents(); double st = 0; int nt = 0;
+                for (int i = 0; i < 5 * (int)n * 5120; i++) { double v = std::fabs((double)tp[i]); st += v; if (v != 0) nt++; }
+                const _Float16* ch = (const _Float16*)dr.cH->contents(); double sc2 = 0; int nc = 0;
+                for (int i = 0; i < (int)n * 5120; i++) { double v = std::fabs((double)ch[i]); sc2 += v; if (v != 0) nc++; }
+                const _Float16* kr = (const _Float16*)dr.kbuf->contents(); double sk = 0; int nk = 0;
+                for (int i = 0; i < 4096 * 1024; i++) { double v = std::fabs((double)kr[i]); sk += v; if (v != 0) nk++; }
+                fprintf(stderr, "[ctx] taps sum|.|=%.1f nonzero=%d/%d | cH sum|.|=%.1f nonzero=%d | ringL0 sum|.|=%.1f nonzero=%d\n", st, nt, 5 * (int)n * 5120, sc2, nc, sk, nk); } }
+        pos += n; anchor = am[n - 1];
     }
     double promptSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     printf("prompt %zu tokens via 8-row windows in %.2f s; anchor %d at pos %u\n", X.size(), promptSec, anchor, pos);
@@ -284,9 +294,15 @@ int cmdDflashEval(int argc, char** argv) {
     int d[8];
     for (int g = 0; g < gen; rounds++) {
         dr.forwardBlock(eng, anchor, pos, logits);                       // proposes rows 1..7
-        if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double sa = 0; int nz = 0;
+        if (rounds == 0) {   // self-consistency: row 0 sees the anchor at its own position, so it should predict the anchor itself
+            const float* lg = (const float*)logits->contents(); double sa = 0; int nz = 0;
             for (int k = 0; k < V; k++) { sa += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
-            fprintf(stderr, "[draft] row0: %.4f %.4f %.4f  sum|.|=%.1f nonzero=%d argmax0=%d argmax1=%d\n", lg[0], lg[1], lg[2], sa, nz, argmaxOf(0), argmaxOf(1)); }
+            int rank = 0; for (int k = 0; k < V; k++) if (lg[k] > lg[anchor]) rank++;
+            int top5[5] = {0,0,0,0,0};
+            for (int t5 = 0; t5 < 5; t5++) { int b = -1; for (int k = 0; k < V; k++) { bool used = false; for (int q5 = 0; q5 < t5; q5++) if (top5[q5] == k) used = true; if (!used && (b < 0 || lg[k] > lg[b])) b = k; } top5[t5] = b; }
+            fprintf(stderr, "[draft] row0 top5:"); for (int t5 = 0; t5 < 5; t5++) fprintf(stderr, " %d(%.2f)", top5[t5], lg[top5[t5]]); fprintf(stderr, " | anchor %d logit %.2f | row1 top1 %d\n", anchor, lg[anchor], argmaxOf(1));
+            fprintf(stderr, "[draft] row0 argmax %d (%s anchor %d, rank %d), sum|.|=%.1f nonzero=%d; row1 argmax %d\n",
+                    argmaxOf(0), argmaxOf(0) == anchor ? "==" : "!=", anchor, rank, sa, nz, argmaxOf(1)); }
         if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double s0 = 0; int nz = 0;
             for (int k = 0; k < V; k++) { s0 += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
             fprintf(stderr, "[draft] row0 logits: %.4f %.4f %.4f ... sum|.| %.1f nonzero %d, argmax %d; row1 argmax %d\n", lg[0], lg[1], lg[2], s0, nz, argmaxOf(0), argmaxOf(1)); }
@@ -296,7 +312,9 @@ int cmdDflashEval(int argc, char** argv) {
         eng.verifyWide(win, (uint32_t)T, pos, am, taps, dr.targetLayers, 5);
         int match = 0; while (match < T - 1 && d[match] == am[match]) match++;
         const uint32_t F = (uint32_t)match + 1;                          // the anchor is confirmed
-        eng.commitWide(F); dr.materialise(eng, taps->contents(), F);
+        eng.commitWide(F);
+        if (getenv("BONSAI_POISON_CTX")) { memset(dr.kbuf->contents(), 0x3c, dr.kbuf->length()); memset(dr.vbuf->contents(), 0x3c, dr.vbuf->length()); }
+        else if (!getenv("BONSAI_NO_CTX")) dr.materialise(eng, taps->contents(), F);
         roundSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - r0).count();
         accepted += (uint64_t)match; produced += F; g += (int)F; pos += F; anchor = am[F - 1];
         if (rounds < 3 || getenv("BONSAI_DBG_DRAFT")) { printf("  round %llu: drafts", (unsigned long long)rounds); for (int i = 0; i < T - 1; i++) printf(" %d", d[i]); printf("\n            trunk  "); for (int i = 0; i < T - 1; i++) printf(" %d", am[i]); printf("\n            accept %d -> %u tokens\n", match, F); }
