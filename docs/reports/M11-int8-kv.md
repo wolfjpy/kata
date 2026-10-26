@@ -87,3 +87,24 @@ Two fixes are viable, in increasing effort:
    which is also exact and cheap (same FLOPs, two calls).
 
 Until one of those lands, int8 KV stays opt-in and is not a default.
+
+## Asymmetric quantisation: implemented, measured, rejected (M29g)
+
+Fix 1 above (asymmetric `k = sc*q + mean`, folded back into the attention as `+ mean * sum_d(q_d)`) was implemented for
+the key side in all three places (quantiser, prefill kernel, decode kernel; `kmean` buffer, per-row `qSum`, A/B switch
+`BONSAI_KV_ASYM`). It measures **worse**, reproducibly:
+
+| quantiser for K | top-1 (2048 positions) |
+|---|---|
+| symmetric `amax/127` (default) | **99.51%** |
+| asymmetric `(min,max)` + mean correction | 99.37% |
+
+The reason is arithmetic rather than a coding error: when the values of one head are roughly symmetric about zero,
+`(MX - MN)/254 = 2*amax/254 = amax/127`, i.e. the asymmetric scale is the *same* as the symmetric one, so there is no
+extra resolution to gain; the mean term then only adds one more fp16 rounding (`mean` is stored as fp16 and multiplied
+by `sum_d(q_d)`, which is O(1) after the 1/sqrt(256) prescale). Fix 2 (two scales per head, 128-dim split MMAs) is
+exact but needs a second 16x256 accumulator for V (128 registers/lane), which does not fit.
+
+So the honest status of the int8 KV cache: **99.51% top-1, opt-in, not a default**; the coarse per-(position, head)
+scale is a property of what the `matmul2d` path can fold, and passing the 99.7% gate needs either fp8 storage or
+per-group scales with one MMA per group.

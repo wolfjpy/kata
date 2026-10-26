@@ -10,10 +10,10 @@ speculative-decoding head.
 
 | | |
 |---|---|
-| **Weights on disk / in memory** | 2.4 GB (27B parameters at 1.58 bit) |
+| **Weights on disk / in memory** | 6.4 GB single GGUF (27B parameters: ternary weights with fp16 group scales, plus a Q8_0 MTP head) |
 | **Prefill** | 280 tok/s (1K chunk) · 227 tok/s (7.3K prompt) |
 | **Decode** | 25.4 tok/s prose · 28–29 tok/s reasoning · 31.6 tok/s structured code (greedy) |
-| **Context** | 32K, fp16 KV ≈ 2.1 GB (int8 KV ≈ 1.1 GB, experimental) |
+| **Context** | 32K (fp16 KV ≈ 2.1 GB, int8 KV ≈ 1.1 GB, opt-in) |
 | **Hardware** | Apple M6, 16 GB unified memory, Metal 4 |
 
 ---
@@ -40,7 +40,7 @@ speculative-decoding head.
 # 1. Build (Xcode command line tools, macOS 15+; Metal 4 / MPP needs a recent SDK)
 make            # builds build/bonsai, build/bonsai.metallib and the dev tools
 
-# 2. Get the model: a single GGUF (~2.4 GB), e.g.
+# 2. Get the model: a single GGUF (~6.4 GB), e.g.
 #    hf download prism-ml/Bonsai-2-27B-gguf bonsai-2-27b-mtp-ptq1_0.gguf --local-dir models/
 
 # 3. Run
@@ -106,7 +106,9 @@ BONSAI_KV=int8 build/bonsai kl-eval --model $M --file corpus.txt --ref ref.bin
 ```
 
 Current results: `--fast-ffn` 99.87% / 7.5e-5 ✅ · `--fast` 98.48% / 2.6e-3 ❌ · `--kv int8` **99.51% top-1** — one
-scale per (position, KV head) covers 256 elements, so an outlier costs 1-2 effective bits; opt-in, not a default. (Its
+scale per (position, KV head) covers 256 elements, so an outlier costs 1-2 effective bits. Asymmetric (mean + scale)
+quantisation was implemented and measured *worse* (99.37%), because a head's values are already near-symmetric; opt-in,
+not a default. (Its
 mean-KL looks alarming only because a few positions have reference logits around 1e6, where a 0.5% relative error is a
 5000-nat shift and the KL is meaningless; `BONSAI_KL_DBG=1` prints those positions.)
 Speculative decoding and the prefix cache are exact by construction and verified byte-identical.
@@ -164,7 +166,43 @@ macOS on Apple Silicon with Metal 4 (MPP `matmul2d`), 16 GB of unified memory, X
 targets one model (Bonsai 2 27B, PTQ1_0 + MTP head) and one machine class; the kernels are specialised for the model's
 shapes (hidden 5120, FFN 17408, 24 Q / 4 KV heads, vocab 248320) rather than general.
 
+## References
+
+This engine is a clean-room implementation, but it would not exist without these sources:
+
+**The model and its quantisation format**
+- Bonsai 2 27B (Prism) — model weights, config and the PTQ1_0 ternary quantisation format, plus the published
+  whitepaper describing the architecture (`docs/reference/bonsai-2-27b-whitepaper.pdf`).
+- `docs/MODEL_SPEC.md` — the architecture as verified against the reference implementation and per-layer logit dumps.
+
+**Reference implementation**
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) (ggml) — the GGUF container format, the general graph structure,
+  and the reference behaviour for sampling, chat templates and tokenizer handling.
+- The Prism llama.cpp fork — `src/llama-graph.cpp` / `src/llama-model.cpp` for the Qwen3.5-style graph, the PTQ1_0
+  dequantisation (`prism_ptq1_0_quant_dequant.c`), the Metal gated-DeltaNet kernel
+  (`prism_metal_gated_delta_net.metal`) and the T=4 verification graph (`prism_qwen35_graph.cpp`). These were read as
+  the specification for numerics; the kernels here are independently written.
+
+**Apple / Metal**
+- *Metal Shading Language Specification* (Metal 4) — the authoritative reference for the language, `simdgroup_matrix`,
+  `threadgroup` memory and barrier semantics.
+- *Metal Performance Primitives* (`MetalPerformancePrimitives/MetalPerformancePrimitives.h`) — `matmul2d_descriptor`,
+  `matmul2d::run`, `cooperative_tensor`, `get_row_reduction_destination_cooperative_tensor`, which the prefill GEMM and
+  the attention kernels are built on.
+- *Metal Feature Set Tables* — for what is available at each `MTLGPUFamily` / Apple-GPU generation.
+
+**Papers the algorithms come from**
+- Yang, Kautz, Hatamizadeh, *Gated Delta Networks: Improving Mamba2 with Delta Rule* (2024) — the gated DeltaNet layer.
+- Schlag, Irie, Schmidhuber, *Linear Transformers Are Secretly Fast Weight Programmers* (2021) — the delta rule.
+- Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models* (2023) — the 24/4 grouped-query attention.
+- Dao et al., *FlashAttention* (2022) — the tiled, online-softmax attention structure used in the prefill kernel.
+- Leviathan, Kalman, Matias, *Fast Inference from Transformers via Speculative Decoding* (2023) — the draft/verify
+  loop and its acceptance rule.
+- Hu et al. / the MTP head design in DeepSeek-V3 (2024) — multi-token-prediction heads used as a self-draft.
+- Ashkboos et al., *QuaRot* (2024) and Tseng et al., *QuIP#* (2024) — the randomised Hadamard transform used as the
+  input basis for the ternary matmuls, and the incoherence argument behind it.
+
 ## License
 
-Model weights are distributed by their authors under their own licence; this engine's source is provided as-is for
-study and experimentation.
+MIT — see [LICENSE](LICENSE). Model weights are distributed by their authors under their own licence; nothing here
+redistributes them.

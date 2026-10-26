@@ -126,6 +126,7 @@ private:
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pQh, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
     static constexpr size_t kHiddenBytes = 5120 * 4;
     MTL::Buffer *hConv = nullptr;
+    MTL::Buffer *kmean = nullptr;   // int8 KV: per (position, KV head) mean for the asymmetric key quantisation
     MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
     MTL::Buffer *vTok = nullptr, *vQkv = nullptr, *vRec = nullptr; int vBase = 0;   // snapshots of the verify window (snap[0] = the input state) and the window's tokens
     // per-layer replay records of a verify window: conv (T x 10240), qk (T x 4096) and gates (T x 96)
@@ -135,7 +136,7 @@ private:
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
     MTL::Buffer *ilvBuf = nullptr;
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
-    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0);
+    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0, MTL::Buffer* kmn = nullptr);
     MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
     uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * bonsai::kKvDim * (kvInt8 ? 1u : 2u); }
     uint64_t scLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * 4 * 2; }
