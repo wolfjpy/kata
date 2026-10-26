@@ -536,6 +536,7 @@ void Engine::dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh
 }
 
 int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut, MTL::Buffer* taps, const int32_t* tapLayers, uint32_t nTaps) {
+    static const bool tapPre = getenv("BONSAI_TAP_PRE") != nullptr;
     if (T == 0 || T > kMaxVerify) { fprintf(stderr, "verifyWide: bad T %u\n", T); exit(1); }
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     memcpy(vTok->contents(), toks, T * 4); vBase = (int)pos;
@@ -600,13 +601,16 @@ int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut
             dWide(e, L.wo, pXp, pTmp, 6144, H, MT);
         }
         norm(pX[c], pTmp, (uint64_t)(il * 2 + 1) * H * 4, pX[c ^ 1], layers[il].postNorm, false); c ^= 1;
+        if (tapPre && taps && tapLayers) for (uint32_t tp = 0; tp < nTaps; tp++) if (tapLayers[tp] == (int32_t)il) {   // diagnostic: mixer-only residual
+            const uint32_t nn = T * H; e->setComputePipelineState(gpu.pipe("k_f2h")); e->setBuffer(pX[c], 0, 0); e->setBuffer(taps, (uint64_t)tp * T * H * 2, 1);
+            e->setBytes(&nn, 4, 2); e->dispatchThreads(MTL::Size(nn, 1, 1), MTL::Size(256, 1, 1)); }
         if (!sk("v_ffn")) { dWide(e, L.ffnGate, pXp, pG, H, kFfn, MT); dWide(e, L.ffnUp, pXp, pU, H, kFfn, MT);
         fwht(pG, pU, sg17408, kFfn, 1);
         dWide(e, L.ffnDown, pXp, pTmp, kFfn, H, MT); }
         if (il + 1 < kLayers) norm(pX[c], pTmp, (uint64_t)((il + 1) * 2) * H * 4, pX[c ^ 1], layers[il + 1].attnNorm, !layers[il + 1].isAttn);
         else norm(pX[c], pTmp, (uint64_t)(kLayers * 2) * H * 4, pX[c ^ 1], outNorm, true);   // final norm; plain hidden rows land in pHh
         c ^= 1;
-        if (taps && tapLayers) for (uint32_t tp = 0; tp < nTaps; tp++) if (tapLayers[tp] == (int32_t)il) {   // complete residual after mixer + FFN (ninfer: "after both residual additions")
+        if (!tapPre && taps && tapLayers) for (uint32_t tp = 0; tp < nTaps; tp++) if (tapLayers[tp] == (int32_t)il) {   // complete residual after mixer + FFN (ninfer: "after both residual additions")
             const uint32_t nn = T * H; e->setComputePipelineState(gpu.pipe("k_f2h")); e->setBuffer(pX[c], 0, 0); e->setBuffer(taps, (uint64_t)tp * T * H * 2, 1);
             e->setBytes(&nn, 4, 2); e->dispatchThreads(MTL::Size(nn, 1, 1), MTL::Size(256, 1, 1)); }
     }
