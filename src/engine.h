@@ -84,7 +84,7 @@ public:
     std::string i8Names() const;
     // ---- wide verification (M26): T (up to kMaxVerify) tokens through the trunk in one pass, keeping a GDN snapshot per accepted-prefix length
     static constexpr uint32_t kMaxVerify = 8;
-    int verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut);   // returns the greedy argmax of row T-1 (all T rows' logits stay in verifyLogits(row))
+    int verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut, MTL::Buffer* taps = nullptr, const int32_t* tapLayers = nullptr, uint32_t nTaps = 0);   // returns the greedy argmax of row T-1 (all T rows' logits stay in verifyLogits(row))
     void commitWide(uint32_t accept);                                            // keep the snapshot after `accept` tokens and make the MTP cache current
     const _Float16* verifyHiddenRow(uint32_t row) const { return (const _Float16*)pHh->contents() + (size_t)row * bonsai::kHidden; }
     // ---- thin wrappers the DFlash2 draft needs from the trunk (its embedding, its shared lm_head, its folded output norm)
@@ -93,8 +93,12 @@ public:
     uint64_t offOutW() const { return outW; }
     uint64_t offOutNormGs() const { return (uint64_t)(bonsai::kLayers * 2) * bonsai::kHidden * 4; }
     MTL::Buffer* gsBuffer() const { return gsAll; }
+    MTL::Buffer* bufLogitsAllPublic() const { return bufLogitsAll; }
     MTL::Buffer* sign5120() const { return sg5120; }
     void xWideGemv(MTL::ComputeCommandEncoder* e, uint64_t off, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t T) { dWide(e, off, xh, y, K, N, T); }
+    MTL::Buffer* embedBuffer() { return bufXp; }        // fp16 staging the draft also uses for its own embeddings
+    void xEmbed(MTL::ComputeCommandEncoder* e, MTL::Buffer* toks, uint32_t T, MTL::Buffer* outFloat);
+    void xFinalNorm(MTL::ComputeCommandEncoder* e, MTL::Buffer* x, uint32_t T, MTL::Buffer* outXp);   // outNorm + sign + FWHT into fp16 rows
     bool int8Mode = false;   // path B: int8 activations x int8 trits, per-group scale epilogue (quality-gated)
     const float* logitsAll() const { return (const float*)bufLogitsAll->contents(); }   // logits of the last nLogits tokens of the previous prefill
     const float* logits() const { return (const float*)bufLogits->contents(); }

@@ -145,8 +145,8 @@ kernel void k_draft_qk(device const float* qin [[buffer(0)]], device const float
                        uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float part[4]; threadgroup float xs[128];
     const uint h = tg.x, t = tg.y; const uint pos = pos0 + t;
-    if (h >= H) {   // V head: copy straight into the ring (no norm, no rope)
-        const uint vh = h - H; vring[ulong(pos) * (HKV * 128u) + vh * 128u + tid] = half(vin[ulong(t) * (HKV * 128u) + vh * 128u + tid]); return;
+    if (h >= H + HKV) {   // V head: copy straight into the ring (no norm, no rope)
+        const uint vh = h - (H + HKV); vring[ulong(pos) * (HKV * 128u) + vh * 128u + tid] = half(vin[ulong(t) * (HKV * 128u) + vh * 128u + tid]); return;
     }
     const bool isK = h >= H + HKV; const uint hh = isK ? h - (H + HKV) : h;
     device const float* src = isK ? kin : qin; device const float* w = isK ? knorm : qnorm;
@@ -216,3 +216,6 @@ kernel void k_draft_ctx_kv(device const float* kproj [[buffer(0)]], device const
         o = a * c - b * s; kring[ulong(row) * (HKV * 128u) + hh * 128u + tid + 32] = half(a * s + b * c); }
     if (tid >= 64 || tid < 32) kring[ulong(row) * (HKV * 128u) + hh * 128u + tid] = half(o);
 }
+
+// float -> half conversion (activations handed to k_draft_mm and to the shared PTQ1_0 head).
+kernel void k_f2h(device const float* src [[buffer(0)]], device half* dst [[buffer(1)]], constant uint& n [[buffer(2)]], uint i [[thread_position_in_grid]]) { if (i < n) dst[i] = half(src[i]); }

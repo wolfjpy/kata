@@ -31,6 +31,7 @@ static void klStats(const char* label, const float* ref, const float* mine, size
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     if (argc > 1 && std::string(argv[1]) == "tokenize") return cmdTokenize(argc, argv);
+    if (argc > 1 && std::string(argv[1]) == "dflash-eval") return cmdDflashEval(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "mtp-accept") return cmdMtpAccept(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "cache") return cmdCache(argc, argv);
     if (argc > 1 && std::string(argv[1]) == "kl-eval") return cmdKlEval(argc, argv);

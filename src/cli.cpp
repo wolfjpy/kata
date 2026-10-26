@@ -25,6 +25,7 @@ int cmdTokenize(int argc, char** argv) {
 #include "engine.h"
 #include "spec.h"
 #include "ckpt.h"
+#include "draft.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -253,5 +254,55 @@ int cmdMtpAccept(int argc, char** argv) {
         totDet += sDet; totSamp += sSamp; totTop1 += sTop1; totN += (size_t)n;
     }
     printf("%-28s  det-argmax draft: %5.1f%%   sampled draft: %5.1f%%   (top-1 agreement %4.1f%%)   => tokens/cycle %.2f -> %.2f\n", "ALL", 100 * totDet / totN, 100 * totSamp / totN, 100 * totTop1 / totN, 1 + totDet / totN, 1 + totSamp / totN);
+    return 0;
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// bonsai dflash-eval: measures the DFlash2 drafter's acceptance and the round cost, end to end (prompt and continuation both go through
+// the wide verification path so the draft's context is materialised from the target's residuals).
+int cmdDflashEval(int argc, char** argv) {
+    std::string model, draftPath, ids, metallib = "build/bonsai.metallib"; int gen = 48;
+    for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--draft") draftPath = argv[++i];
+        else if (a == "--ids") ids = argv[++i]; else if (a == "--gen") gen = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
+    std::vector<int> X; { size_t p = 0; while (p < ids.size()) { size_t q = ids.find(',', p); if (q == std::string::npos) q = ids.size(); X.push_back(atoi(ids.substr(p, q - p).c_str())); p = q + 1; } }
+    if (model.empty() || draftPath.empty() || X.empty()) { fprintf(stderr, "usage: bonsai dflash-eval --model M --draft D.gguf --ids 1,2,3 [--gen N]\n"); return 1; }
+    Engine eng; if (!eng.load(model, metallib, 8192, 0)) return 1;
+    Draft dr; if (!dr.load(eng, draftPath)) return 1; eng.mtpTrack = false;
+    const int V = (int)bonsai::kVocab, T = (int)Draft::kBlock;
+    MTL::Buffer* taps = eng.gpu.alloc(5 * 8 * 5120 * 2); MTL::Buffer* logits = eng.bufLogitsAllPublic();
+    int am[8]; uint32_t pos = 0; int anchor = -1;
+    auto argmaxOf = [&](int row) { const float* lg = (const float*)logits->contents() + (size_t)row * V; int b = 0; for (int k = 1; k < V; k++) if (lg[k] > lg[b]) b = k; return b; };
+    auto t0 = std::chrono::steady_clock::now();
+    while (pos < (uint32_t)X.size()) {   // prompt: 8-token verification windows, then materialise the draft context
+        const uint32_t n = std::min<uint32_t>(T, (uint32_t)X.size() - pos);
+        eng.verifyWide(X.data() + pos, n, pos, am, taps, dr.targetLayers, 5);
+        eng.commitWide(n); dr.materialise(eng, taps->contents(), n); pos += n; anchor = am[n - 1];
+    }
+    double promptSec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    printf("prompt %zu tokens via 8-row windows in %.2f s; anchor %d at pos %u\n", X.size(), promptSec, anchor, pos);
+    uint64_t rounds = 0, accepted = 0, produced = 0; double roundSec = 0;
+    int d[8];
+    for (int g = 0; g < gen; rounds++) {
+        dr.forwardBlock(eng, anchor, pos, logits);                       // proposes rows 1..7
+        if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double sa = 0; int nz = 0;
+            for (int k = 0; k < V; k++) { sa += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
+            fprintf(stderr, "[draft] row0: %.4f %.4f %.4f  sum|.|=%.1f nonzero=%d argmax0=%d argmax1=%d\n", lg[0], lg[1], lg[2], sa, nz, argmaxOf(0), argmaxOf(1)); }
+        if (rounds == 0 && getenv("BONSAI_DBG_DRAFT")) { const float* lg = (const float*)logits->contents(); double s0 = 0; int nz = 0;
+            for (int k = 0; k < V; k++) { s0 += std::fabs(lg[k]); if (lg[k] != 0.0f) nz++; }
+            fprintf(stderr, "[draft] row0 logits: %.4f %.4f %.4f ... sum|.| %.1f nonzero %d, argmax %d; row1 argmax %d\n", lg[0], lg[1], lg[2], s0, nz, argmaxOf(0), argmaxOf(1)); }
+        for (int i = 0; i < T - 1; i++) d[i] = argmaxOf(i + 1);
+        int win[8]; win[0] = anchor; for (int i = 0; i < T - 1; i++) win[i + 1] = d[i];
+        auto r0 = std::chrono::steady_clock::now();
+        eng.verifyWide(win, (uint32_t)T, pos, am, taps, dr.targetLayers, 5);
+        int match = 0; while (match < T - 1 && d[match] == am[match]) match++;
+        const uint32_t F = (uint32_t)match + 1;                          // the anchor is confirmed
+        eng.commitWide(F); dr.materialise(eng, taps->contents(), F);
+        roundSec += std::chrono::duration<double>(std::chrono::steady_clock::now() - r0).count();
+        accepted += (uint64_t)match; produced += F; g += (int)F; pos += F; anchor = am[F - 1];
+        if (rounds < 3 || getenv("BONSAI_DBG_DRAFT")) { printf("  round %llu: drafts", (unsigned long long)rounds); for (int i = 0; i < T - 1; i++) printf(" %d", d[i]); printf("\n            trunk  "); for (int i = 0; i < T - 1; i++) printf(" %d", am[i]); printf("\n            accept %d -> %u tokens\n", match, F); }
+    }
+    printf("DFlash2: %llu rounds, %llu tokens, %.2f tokens/round, %.1f ms/round, %.1f tok/s (verify+commit %.1f ms/round)\n",
+           (unsigned long long)rounds, (unsigned long long)produced, (double)produced / rounds, 1e3 * roundSec / rounds, produced / (roundSec + 1e-9),
+           1e3 * roundSec / rounds);
     return 0;
 }

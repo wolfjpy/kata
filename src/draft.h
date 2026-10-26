@@ -13,6 +13,7 @@ struct Draft {
     static constexpr int32_t kMaskTok = 248070;
 
     Gguf gg; bool ok = false; uint32_t frontier = 0;
+    bool isQ6(uint64_t off) const { for (auto& kv : gg.tensors) if (kv.second.fileOffset == off) return kv.second.type == GGML_Q6_K; return false; }
     struct LayerW { uint64_t q = 0, k = 0, v = 0, o = 0, qNorm = 0, kNorm = 0, attnNorm = 0, attnCb = 0, attnCp = 0,
                     gate = 0, up = 0, down = 0, ffnNorm = 0, ffnCb = 0, ffnCp = 0; };
     LayerW L[kLayers];
@@ -23,6 +24,7 @@ struct Draft {
     MTL::Buffer *kbuf = nullptr, *vbuf = nullptr;          // [kLayers][kRing][kKvHeads*128] fp16 ring
     MTL::Buffer *catH = nullptr, *cH = nullptr;            // fp16 matmul operands: [kNMax][25600] taps, [kNMax][kH] context vector
     MTL::Buffer *fcf = nullptr, *kvf = nullptr, *nrmf = nullptr, *nrmH = nullptr;
+    MTL::Buffer *xA = nullptr, *xB = nullptr, *tmpA = nullptr, *fout2 = nullptr, *gU = nullptr, *aoutH = nullptr, *kvf2 = nullptr, *ffnH = nullptr, *tmpB = nullptr;
     MTL::Buffer *x = nullptr, *nrm = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *aout = nullptr, *tmp = nullptr,
                 *dyn = nullptr, *fout = nullptr, *probs = nullptr, *tapsBuf = nullptr, *wbuf = nullptr;
     MTL::Buffer *tokbuf = nullptr;
@@ -30,7 +32,8 @@ struct Draft {
     bool load(Engine& eng, const std::string& path);
     void reset() { frontier = 0; }
     // Materialises context K/V for positions [frontier, frontier+n) from the trunk's residual taps (kTargets x n x kH, fp16, tap-major).
-    void materialise(Engine& eng, const void* tapsFp16, const int32_t* toks, uint32_t n);   // synchronous (once per commit boundary)
+    // Materialises the context K/V for n (<= kBlock) positions starting at `frontier`; tapsFp16 is [tap][row][kH] fp16.
+    void materialise(Engine& eng, const void* tapsFp16, uint32_t n);
     // One masked forward at position pos: anchor token + masks; writes the block's logits (kBlock x vocab) to `logitsOut`.
-    void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // synchronous
+    void forwardBlock(Engine& eng, int32_t anchor, uint32_t pos, MTL::Buffer* logitsOut);   // writes kBlock x vocab logits (synchronous)
 };

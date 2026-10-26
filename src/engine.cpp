@@ -531,7 +531,7 @@ void Engine::dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh
     (void)MT;
 }
 
-int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut) {
+int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut, MTL::Buffer* taps, const int32_t* tapLayers, uint32_t nTaps) {
     if (T == 0 || T > kMaxVerify) { fprintf(stderr, "verifyWide: bad T %u\n", T); exit(1); }
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     memcpy(vTok->contents(), toks, T * 4); vBase = (int)pos;
@@ -644,4 +644,15 @@ void Engine::commitWide(uint32_t accept) {
         e2->endEncoding(); cb2->commit(); cb2->waitUntilCompleted(); p2->release();
     }
     if (hasMtp && mtpTrack) setHPrevH(verifyHiddenRow(accept - 1));
+}
+
+void Engine::xEmbed(MTL::ComputeCommandEncoder* e, MTL::Buffer* toks, uint32_t T, MTL::Buffer* outFloat) {
+    e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(toks, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(outFloat, 0, 3);
+    e->dispatchThreadgroups(MTL::Size(5, T, 1), MTL::Size(256, 1, 1));
+}
+void Engine::xFinalNorm(MTL::ComputeCommandEncoder* e, MTL::Buffer* x, uint32_t T, MTL::Buffer* outXp) {
+    uint32_t flags = 0;
+    e->setComputePipelineState(gpu.pipe("k_add_rms_fwht_t")); e->setBuffer(x, 0, 0); e->setBuffer(x, 0, 1); e->setBuffer(gsAll, (uint64_t)(bonsai::kLayers * 2) * bonsai::kHidden * 4, 2);
+    e->setBuffer(outXp, 0, 3); e->setBuffer(x, 0, 4); e->setBuffer(wbuf, outNorm, 5); e->setBuffer(x, 0, 6); e->setBytes(&flags, 4, 7);
+    e->dispatchThreadgroups(MTL::Size(T, 1, 1), MTL::Size(256, 1, 1));
 }
