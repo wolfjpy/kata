@@ -8,6 +8,8 @@ No llama.cpp, no MLX, no MPS graph: every kernel is hand-written Metal Shading L
 weight decoder, the gated DeltaNet recurrence, the attention path, a tensor-core (`matmul2d`) prefill GEMM, and the MTP
 speculative-decoding head.
 
+**[Release v0.1.0](https://github.com/wolfjpy/kata/releases/tag/v0.1.0)** · **[Engineering log](docs/CHECKPOINT-001.md)** ([1](docs/CHECKPOINT-001.md) · [2](docs/CHECKPOINT-002.md) · [3](docs/CHECKPOINT-003.md) · [4](docs/CHECKPOINT-004.md), plus 29 milestone reports in [`docs/reports/`](docs/reports/)) — every optimisation decision with the measurement that justified it, including the ones that failed.
+
 | | |
 |---|---|
 | **Weights on disk / in memory** | 6.4 GB single GGUF (27B parameters: ternary weights with fp16 group scales, plus a Q8_0 MTP head) |
