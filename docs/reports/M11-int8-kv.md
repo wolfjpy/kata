@@ -43,3 +43,19 @@
 - 7K 上下文以内没有速度收益(注意力那点时间被延迟而不是字节主导);只有内存收益。
 - 旧的标量注意力内核(`BONSAI_SCALAR_*`)只支持 fp16 KV,int8 模式下被忽略。
 - 评测语料是论文/文档/规范的混合文本;需要更长(32K+)的真实对话/代码语料才能得出更窄的置信区间。
+
+## Correction (M29d, re-measured)
+
+The "KL 1.3e-4 / top-1 99.71%" figure above does not reproduce with a cross-process reference. The paired `kl-eval` mode
+is invalid for int8 KV because `kvInt8` decides the buffer allocation at load time, so mixing both paths in one process
+only proves that the layout change alone corrupts the result. Measured properly:
+
+```
+BONSAI_KV=fp16  bonsai kl-eval ... --save-ref ref.bin     # reference
+BONSAI_KV=int8  bonsai kl-eval ... --ref ref.bin
+-> 1536 positions | mean KL 4.374e+01 nat | max KL 4.709e+04 | max |logit diff| 1.68e+07 | top-1 1527/1536 (99.41%)
+```
+
+Large but sparse: top-1 survives almost everywhere while individual positions blow up, which points at the chunked
+prefill attention path (`k_flash_prefill_q8`) rather than at the quantiser — the single-token decode path produces
+coherent text. Until that kernel is fixed, int8 KV stays opt-in and is not a default.

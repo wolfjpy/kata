@@ -58,17 +58,25 @@ struct Session {
 
 int cmdRun(int argc, char** argv, bool interactive) {
     std::string model, prompt, system, effort = "xhigh", metallib = "build/bonsai.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("BONSAI_CHAIN") != nullptr, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
-    CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec;
+    CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec; bool i8explicit = false;   // int8 FFN prefill is opt-in: it does not stack with the default int8 KV cache inside the quality gate
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
         if (a == "--model") model = nx(); else if (a == "--prompt") prompt = nx(); else if (a == "--file") { prompt = readFile(argv[++i]); haveFile = true; } else if (a == "--system") system = nx(); else if (a == "--raw") raw = true;
         else if (a == "--no-think") noThink = true; else if (a == "--effort") effort = nx(); else if (a == "--max-tokens") maxTokens = atoi(nx().c_str()); else if (a == "--ctx") ctx = (uint32_t)atoi(nx().c_str());
         else if (a == "--temp") sp.temp = (float)atof(nx().c_str()); else if (a == "--top-k") sp.topK = atoi(nx().c_str()); else if (a == "--top-p") sp.topP = (float)atof(nx().c_str()); else if (a == "--min-p") sp.minP = (float)atof(nx().c_str());
-        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") i8spec = "all"; else if (a == "--fast-ffn") i8spec = "ffn"; else if (a == "--i8") i8spec = nx(); else if (a == "--exact") i8spec = ""; else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
+        else if (a == "--seed") sp.seed = (uint64_t)atoll(nx().c_str()); else if (a == "--fast") { i8spec = "all"; i8explicit = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8explicit = true; } else if (a == "--i8") { i8spec = nx(); i8explicit = true; } else if (a == "--exact") { i8spec.clear(); setenv("BONSAI_KV", "fp16", 1); } else if (a == "--metallib") metallib = nx(); else if (a == "--quiet") stats = false; else if (a == "--no-spec") noSpec = true; else if (a == "--kv") setenv("BONSAI_KV", nx().c_str(), 1); else if (a == "--no-cache") cc.enabled = false; else if (a == "--cache-dir") cc.dir = nx(); else if (a == "--cache-gb") cc.budgetBytes = (uint64_t)(atof(nx().c_str()) * (1ull << 30)); else if (a == "--cache-min") cc.minTokens = (uint32_t)atoi(nx().c_str());
     }
     if (model.empty() || (!interactive && prompt.empty() && !haveFile)) { fprintf(stderr, "usage: bonsai run  --model M.gguf --prompt P [--system S] [--raw] [--no-think] [--effort xhigh|medium|low] [--max-tokens N] [--temp T --top-k K --top-p P --min-p P --seed S] [--fast] [--ctx N]\n       bonsai chat --model M.gguf [same options]\n"); return 1; }
     Session S; S.ctx = ctx; S.fast = !i8spec.empty();
     if (!S.eng.load(model, metallib, ctx, 0)) return 1; if (!S.eng.setI8(i8spec)) { fprintf(stderr, "--i8: unknown matrix name in \"%s\" (qkv z ssmout wq wk wv wo gate up down, all, ffn)\n", i8spec.c_str()); return 1; } const bool fast = S.eng.int8Mode; const bool spec = S.eng.hasMtp && !noSpec; S.eng.mtpTrack = spec;
+    // the int8 KV cache is on by default (half the cache memory, +14% decode / +10% prefill at long context, top-1 99.71%);
+    // the two int8 paths together measured 99.58% top-1, below the 99.7% gate, so the prefill stays exact unless asked for.
+    // NOTE: the int8 KV cache is opt-in (--kv int8): the chunked prefill attention path measured mean KL 43.7 / max logit
+    // diff 1.7e7 against fp16 KV, so it is not fit to be a default until that kernel is fixed.
+    if (i8explicit && std::string(getenv("BONSAI_KV")) == "int8") {
+        fprintf(stderr, "note: the int8 FFN prefill stacked on the int8 KV cache measured 99.58%% top-1 (gate 99.7%%); the prefill stays exact. Use --kv fp16 to combine them anyway.\n");
+        i8spec.clear(); S.fast = false;
+    }
     SpecStats sst;
     PrefixCache cache(S.eng, cc, spec); S.cache = &cache;
     if (!S.tok.load(S.eng.gg)) return 1;

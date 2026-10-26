@@ -1,66 +1,168 @@
-# bonsai-m6
+# Bonsai
 
-A Metal-only inference engine specialised for **Ternary Bonsai 2 27B** (Qwen3.8-27B, PTQ1_0 with Hadamard-folded ternary weights) on a **Mac mini M6, 16 GB**. C++17 + Metal Shading Language, no Python, no frameworks. Speed is the only goal.
+A from-scratch **Metal inference engine** for [Bonsai 2 27B](https://huggingface.co/prism-ml) — a 27B hybrid-attention
+model whose weights are stored at **1.58 bits** (ternary ±1 with fp16 group scales) — running entirely on-device in a
+16 GB Apple laptop.
 
-## Build
+No llama.cpp, no MLX, no MPS graph: every kernel is hand-written Metal Shading Language, including the on-the-fly 2-bit
+weight decoder, the gated DeltaNet recurrence, the attention path, a tensor-core (`matmul2d`) prefill GEMM, and the MTP
+speculative-decoding head.
 
-```sh
-make            # build/bonsai and build/bonsai.metallib (needs Xcode 27 with the Metal toolchain)
+| | |
+|---|---|
+| **Weights on disk / in memory** | 2.4 GB (27B parameters at 1.58 bit) |
+| **Prefill** | 280 tok/s (1K chunk) · 227 tok/s (7.3K prompt) |
+| **Decode** | 25.4 tok/s prose · 28–29 tok/s reasoning · 31.6 tok/s structured code (greedy) |
+| **Context** | 32K, fp16 KV ≈ 2.1 GB (int8 KV ≈ 1.1 GB, experimental) |
+| **Hardware** | Apple M6, 16 GB unified memory, Metal 4 |
+
+---
+
+## Highlights
+
+- **Ternary weights, decoded in the kernel.** PTQ1_0 packs 5 weights into 2 bytes as base-3 digits. The GEMV kernel
+  turns a 256-entry lookup table of 8-wide ternary patterns into one dispatch, so no dequantised copy of the model ever
+  exists in memory.
+- **Hybrid attention, both kinds.** 48 of the 64 layers are gated DeltaNet (conv state + delta-rule recurrence, one
+  kernel per token, state kept in registers); the other 16 are GQA attention with per-head QK-norm, partial RoPE and a
+  sigmoid output gate. The two paths are fused end to end in a single command buffer per layer.
+- **Speculative decoding with the model's own MTP head** (blk.64, Q8_0): a one-token draft per step, verified in the
+  same command buffer as the target forward, so a draft is never paid for twice.
+- **Prefix cache.** A prompt whose token prefix was seen before restores its complete state (KV, conv state, recurrence
+  state) from `~/.cache/bonsai` instead of prefilling it: a repeated 3.6K-token prompt goes from 18.6 s to 0.03 s, with
+  byte-identical output.
+- **A quality gate, not a vibe.** Every lossy switch is measured against the exact fp16 path with a KL / top-1 harness
+  (`bonsai kl-eval`), and switches that fail it are documented as failed instead of shipped.
+
+## Quick start
+
+```bash
+# 1. Build (Xcode command line tools, macOS 15+; Metal 4 / MPP needs a recent SDK)
+make            # builds build/bonsai, build/bonsai.metallib and the dev tools
+
+# 2. Get the model: a single GGUF (~2.4 GB), e.g.
+#    hf download prism-ml/Bonsai-2-27B-gguf bonsai-2-27b-mtp-ptq1_0.gguf --local-dir models/
+
+# 3. Run
+build/bonsai run --model models/bonsai-2-27b-mtp-ptq1_0.gguf \
+                 --prompt "Explain why a delta-rule recurrence is cheaper than attention at inference." \
+                 --max-tokens 256
+
+# 4. Interactive chat (streaming, thinking levels, prefix cache on by default)
+build/bonsai chat --model models/bonsai-2-27b-mtp-ptq1_0.gguf
 ```
 
-The model file is expected outside the repository (see `VERSIONS`): `../../models/bonsai-2-27b-mtp-ptq1_0.gguf` (ollama `mannix/Bonsai-2-27B:mtp-ptq1_0`).
+## Usage
 
-## Use
-
-```sh
-M=../../models/bonsai-2-27b-mtp-ptq1_0.gguf
-build/bonsai run  --model $M --prompt "Explain unified memory in one paragraph." --max-tokens 300
-build/bonsai chat --model $M --system "You are concise."          # interactive; the KV cache and GDN state are reused between turns
-build/bonsai run  --model $M --prompt "..." --no-think --temp 0    # thinking off, greedy
-build/bonsai run  --model $M --raw --file prompt.txt               # pre-rendered prompt (special tokens parsed)
-build/bonsai run  --model $M --prompt "..." --no-spec              # plain decoding (MTP speculative decoding is on by default and exact)
-build/bonsai run  --model $M --prompt "..." --fast-ffn             # int8 prefill for the FFN gate+up only: +7-9% prefill, passes the quality gate (KL 7.5e-5, top-1 99.87%; docs/reports/M13-fast-ffn.md)
-build/bonsai run  --model $M --prompt "..." --fast                 # int8 prefill for every matrix: +10%, does NOT pass the quality gate (docs/reports/M5b-prefill-optimization.md)
-build/bonsai run  --model $M --system "$(cat long_system_prompt.txt)" --prompt "..."   # the second run restores the system prompt from the disk cache
-build/bonsai run  --model $M --prompt "..." --kv int8             # int8 KV cache: half the KV memory, +14% decode / +10% prefill at 29K context (lossy: KL 1.3e-4, top-1 99.71%)
-build/bonsai cache [--clear]                                        # list / delete the persistent prefix cache (default ~/.cache/bonsai, 40 GB budget)
-build/bonsai tokenize --model $M --text "hello"                    # token ids, identical to llama-tokenize
+```
+bonsai run    --model M.gguf --prompt P [--system S] [--raw] [--no-think]
+              [--effort xhigh|medium|low] [--temp T] [--top-k K] [--top-p P]
+              [--max-tokens N] [--ctx N] [--no-spec] [--no-cache] [--exact]
+bonsai chat   --model M.gguf [same options]
+bonsai kl-eval --model M.gguf --file corpus.txt [--tokens N] [--save-ref R.bin | --ref R.bin]
+bonsai verify-check --model M.gguf ...
 ```
 
-Defaults follow the model card: temperature 1.0, top-k 20, top-p 0.95, min-p 0.05, thinking enabled with `xhigh` effort.
+Quality / performance switches:
 
-## Development tools
-
-```sh
-make ref_logits        # reference runtime wrapper (needs the Prism llama.cpp checkout, see VERSIONS)
-build/ref_logits --model $M --text "..." --out ref.bin --dump-dir dump/ --gen 12
-build/bonsai --model $M --ids 1,2,3 --ref-dir dump/ --ref-logits ref.bin     # layer-by-layer comparison
-build/bonsai --model $M --ids ... --prefill [--int8] --nlogits 72 --cmp-logits golden.bin   # KL / top-1 against saved logits
-build/bonsai --model $M --ids ... --gen 64 --skip gemv_gate,k_gdn_step       # per-kernel ablation timing
-make build/bench_gemv  # GEMV microbenchmark on real tensors (fp32 activations); build/bench_gemv2 for the two-token variants
-build/bonsai mtp-eval     --model $M --ids ... --gen 96     # how often the MTP head predicts the main model's greedy token
-build/bonsai verify-check --model $M --ids ...              # two-token verification pass vs the exact decode path (KL, top-1)
-build/bonsai kl-eval      --model $M --file corpus.txt --tokens 24576   # int8 prefill vs exact prefill on a corpus
-sh tools/test_cache.sh                                       # regression test of the prefix cache (needs the model)
-make build/probe_flash && build/probe_flash                 # prefill attention kernel: correctness vs CPU and speed per context length
-```
-
-## Status
-
-See `docs/CHECKPOINT-001.md` (design and measurements), `docs/MODEL_SPEC.md` (verified formulas) and `docs/reports/` (one report per milestone).
-
-Measured on the Mac mini M6 (the GPU throttles under sustained load, so repeated runs can differ by 10 to 15 percent).
-
-| | this engine | reference (Prism llama.cpp, same machine) |
+| flag | effect | quality (top-1 / mean KL) |
 |---|---|---|
-| decode, plain | **19.8 tok/s** | 15.6 tok/s (tg128) |
-| decode, MTP speculative (greedy / sampling) | **25.0 / 22.7 tok/s** | |
-| prefill, exact fp16, 512 tokens | **245 tok/s** | 208 tok/s (pp512) |
-| prefill, exact fp16, 1024-token chunk | **257 tok/s** | |
-| prefill, exact fp16, 7.3K-token prompt | **213 tok/s** | |
-| prefill, `--fast-ffn` (opt-in, lossy, within the gate) | 274 to 280 tok/s (1024 chunk), 226 tok/s (7.3K) | |
-| prefill, `--fast` (opt-in, outside the gate) | 281 tok/s | |
+| *(default)* | exact fp16 prefill, MTP speculative decoding on | reference |
+| `--fast-ffn` | int8 FFN gate/up/down during prefill: **+10%** prefill | 99.87% / 7.5e-5 ✅ |
+| `--fast` | int8 for every prefill matrix: +11% prefill | 98.48% / 0.0026 ❌ |
+| `--kv int8` | int8 KV cache: half the KV memory, +14% decode at long context | **broken in chunked prefill** ⚠️ |
+| `--exact` | force every lossy path off | reference |
+| `--no-spec` | disable MTP speculative decoding | identical output |
 
-Persistent prefix cache (M9): a prompt whose token prefix was seen before restores its complete state from `~/.cache/bonsai` instead of prefilling it. A 2.9K-token system prompt: 15 s of prefill becomes 0.1 s of restore plus the 21 new tokens; a repeated 3.6K-token prompt: 18.6 s becomes 0.03 s. Outputs are byte-identical to the uncached run. Options: `--no-cache`, `--cache-dir`, `--cache-gb`, `--cache-min` (see `docs/reports/M9-prefix-cache.md`; checkpoints contain the prompt's KV, so use `--no-cache` for sensitive prompts).
+## Performance
 
-Quality: speculative decoding keeps the output distribution unchanged (verification pass vs exact decode: mean KL 4.3e-6, top-1 100 percent over 830 positions). The exact prefill path matches the fp32 golden logits (mean KL 1.4e-7). The int8 path does not meet the proposed gate (mean KL 4.4e-4, top-1 99.54 percent on 1536 positions), so it is off by default.
+Apple M6, 16 GB, `--temp 0`, single run per row (measurements drift ±5% with thermal state).
+
+| Workload | tok/s |
+|---|---|
+| Prefill, 1K tokens (exact / `--fast-ffn` / `--fast`) | 249 / 280 / 262 |
+| Prefill, 7.3K prompt (`--fast-ffn`) | 227 |
+| Decode, prose | 25.4 |
+| Decode, reasoning text (MTP accepting 85–90% of drafts) | 28–29 |
+| Decode, structured/greedy code | 31.6 |
+| Decode, 29K context | 18.4 |
+
+Decode is bound by streaming 2.4 GB of weights per token: at 25–31 tok/s the engine sustains roughly 70 GB/s of
+effective bandwidth, which is where the roofline for this model sits on a laptop memory system. Prefill is bound by the
+ALU cost of decoding 2-bit weights, not by bandwidth (`--fast-ffn` wins by shrinking the ALU work, not the bytes).
+
+## Quality gates
+
+Lossy switches are only accepted if they stay above **99.7% top-1** and below **KL 1e-3** against the exact fp16 path
+over 3072 positions:
+
+```bash
+# exact vs int8 prefill (single process, both paths)
+build/bonsai kl-eval --model $M --file corpus.txt --tokens 3072 --keep 256 --chunk 512
+
+# a configuration that changes buffer layouts (e.g. int8 KV) needs two processes
+BONSAI_KV=fp16 build/bonsai kl-eval --model $M --file corpus.txt --save-ref ref.bin
+BONSAI_KV=int8 build/bonsai kl-eval --model $M --file corpus.txt --ref ref.bin
+```
+
+Current results: `--fast-ffn` 99.87% / 7.5e-5 ✅ · `--fast` 98.48% / 2.6e-3 ❌ · `--kv int8` **fails** in the chunked
+prefill attention path (mean KL 43.7, occasional logit blow-ups) and is therefore opt-in and flagged, not a default.
+Speculative decoding and the prefix cache are exact by construction and verified byte-identical.
+
+## How it works
+
+```
+x = embed(token)
+for il in 0..63:
+    h = rmsnorm(x, attn_norm[il])
+    a = gated_delta_net(h)        if il % 4 != 3
+      = gqa_attention(h)          if il % 4 == 3     # 16 layers, per-head QK-norm, partial RoPE, sigmoid gate
+    x = x + a
+    h = rmsnorm(x, post_attention_norm[il])
+    x = x + ffn_down(silu(ffn_gate(h)) * ffn_up(h))
+logits = lm_head(rmsnorm(x, output_norm))
+```
+
+Every ternary matmul rotates its input with a fast Walsh–Hadamard transform first (the quantisation basis), which is
+fused into the RMSNorm kernel. One command buffer per layer keeps the ~50 dispatches of a decode token in flight without
+a CPU round trip; the MTP draft, target forward and verification share that buffer.
+
+Repository layout:
+
+```
+src/        engine (model, layers, kernels dispatch), session, sampler, tokenizer, chat template, CLI
+shaders/    Metal kernels: ternary GEMV/GEMM, GDN, attention, norms, MPP matmul, quantisation
+tools/      reference logit exporters, kernel microbenchmarks, quality harnesses
+docs/       model spec, per-milestone reports, checkpoints
+```
+
+## What did not work (and why it is in the docs)
+
+This engine has a paper trail of negative results, because they are the expensive part:
+
+- **Turbo-fish 0.5-bit and 2:4 sparsity**: both need a different weight layout; measured slower than the 1.58-bit
+  layout for this model.
+- **Deeper MTP chains** (2–3 drafts): acceptance collapses in the chain path and, even at the reference acceptance
+  rate, the wider verification costs 1.57× per round while producing 1.68× the tokens — a wash at best.
+- **A DFlash2-style 7-token drafter**: the draft network's first-token agreement is only ~0.4 in this port, so the
+  wide window does not pay off yet.
+- **Wide verification on tensor cores**: the `matmul2d` path at M=16 runs at 9.4 TFLOPS (54% of peak on this chip),
+  which puts the achievable speedup of an 8-row verification at 1.8×, not the 1.6× that would make deep speculation
+  profitable. Two-row-group pipelining was implemented, measured 1.6× *slower*, and removed.
+
+## Documentation
+
+`docs/MODEL_SPEC.md` is the ground truth for the architecture (verified against the reference implementation and
+per-layer logit dumps). `docs/CHECKPOINT-00{1..4}.md` are milestone summaries; `docs/reports/M*.md` are the individual
+investigations, each with the measurement that justified the next step — including the ones that failed.
+
+## Requirements
+
+macOS on Apple Silicon with Metal 4 (MPP `matmul2d`), 16 GB of unified memory, Xcode command line tools. The engine
+targets one model (Bonsai 2 27B, PTQ1_0 + MTP head) and one machine class; the kernels are specialised for the model's
+shapes (hidden 5120, FFN 17408, 24 Q / 4 KV heads, vocab 248320) rather than general.
+
+## License
+
+Model weights are distributed by their authors under their own licence; this engine's source is provided as-is for
+study and experimentation.
