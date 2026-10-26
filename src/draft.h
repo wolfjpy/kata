@@ -14,9 +14,13 @@ struct Draft {
     static constexpr int32_t kMaskTok = 248070;
 
     Gguf gg; bool ok = false; uint32_t frontier = 0;
+    bool rotated = false;                                  // ternary drafters: weights live in Bonsai's Hadamard basis, so every matrix input is transformed
+    MTL::Buffer *signs = nullptr, *ones = nullptr;          // concatenated sign vectors for widths 4096/5120/17408/25600, and a +1 vector for the folded output norm
+    uint32_t signOff[4] = {0, 0, 0, 0};                    // element offsets of those widths inside `signs`
+    uint32_t signOffFor(uint32_t W) const;
     // decoder tag for k_draft_mm: 0 = Q4_K, 1 = Q6_K, 2 = Q2_K, 3 = Q3_K
     int qtypeOf(uint64_t off) const { for (auto& kv : gg.tensors) if (kv.second.fileOffset == off) {
-        switch (kv.second.type) { case GGML_Q6_K: return 1; case GGML_Q2_K: return 2; case GGML_Q3_K: return 3; default: return 0; } } return 0; }
+        switch (kv.second.type) { case GGML_Q6_K: return 1; case GGML_Q2_K: return 2; case GGML_Q3_K: return 3; case GGML_PQ2_0: return 4; default: return 0; } } return 0; }
     struct LayerW { uint64_t q = 0, k = 0, v = 0, o = 0, qNorm = 0, kNorm = 0, attnNorm = 0, attnCb = 0, attnCp = 0,
                     gate = 0, up = 0, down = 0, ffnNorm = 0, ffnCb = 0, ffnCp = 0; };
     LayerW L[kLayers];
@@ -25,7 +29,7 @@ struct Draft {
 
     static constexpr uint32_t kNMax = 64;                  // positions per materialise call
     MTL::Buffer *kbuf = nullptr, *vbuf = nullptr;          // [kLayers][kRing][kKvHeads*128] fp16 ring
-    MTL::Buffer *catH = nullptr, *cH = nullptr;            // fp16 matmul operands: [kNMax][25600] taps, [kNMax][kH] context vector
+    MTL::Buffer *catH = nullptr, *catF = nullptr, *cH = nullptr, *cf = nullptr;            // fp16 matmul operands: [kNMax][25600] taps, [kNMax][kH] context vector
     MTL::Buffer *fcf = nullptr, *kvf = nullptr, *nrmf = nullptr, *nrmH = nullptr;
     MTL::Buffer *xA = nullptr, *xB = nullptr, *tmpA = nullptr, *fout2 = nullptr, *gU = nullptr, *aoutH = nullptr, *kvf2 = nullptr, *ffnH = nullptr, *tmpB = nullptr;
     MTL::Buffer *x = nullptr, *nrm = nullptr, *q = nullptr, *k = nullptr, *v = nullptr, *aout = nullptr, *tmp = nullptr,
@@ -43,5 +47,6 @@ struct Draft {
     void forwardBlockTruth(Engine& eng, const int* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);   // diagnostic: explicit block rows
 private:
     void forwardBlockToks(Engine& eng, const int32_t* toks, uint32_t pos, MTL::Buffer* logitsOut, uint32_t T);
+    void fwhtIn(Engine& eng, MTL::ComputeCommandEncoder* e, MTL::Buffer* inF, MTL::Buffer* outH, uint32_t W, uint32_t T);
 public:
 };

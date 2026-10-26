@@ -130,6 +130,18 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
                     *(threadgroup half4*)(out + piece + 32 + 4 * k) = hi;                         // elements g*64 + 32 + piece + 4k .. +3
                 }
             }
+        } else if (QT == 4) {   // PQ2_0: 34 bytes per 128 weights; lane decodes the 4 codes of its own byte
+            const uint rowBlocks = nblk * 2u;
+            for (uint r = 0; r < N; r++) {
+                device const uchar* bp = W + (ulong(min(row0 + r, Nout - 1u)) * ulong(rowBlocks) + kc) * 34ul;
+                const float d = float(as_type<half>(*(device const ushort*)(bp)));
+                const uint byte = bp[2 + lane];
+                threadgroup half* o = &Bt[sg][r * LD + lane * 4u];
+                o[0] = half(d * float(int(byte & 3u) - 1));
+                o[1] = half(d * float(int((byte >> 2) & 3u) - 1));
+                o[2] = half(d * float(int((byte >> 4) & 3u) - 1));
+                o[3] = half(d * float(int((byte >> 6) & 3u) - 1));
+            }
         } else if (QT == 2) {
             device const uchar* bp_of = W + (ulong(min(row0, Nout - 1u)) * ulong(nblk) + sb) * 84ul; (void)bp_of;
             for (uint rr = 0; rr < N; rr++) for (uint jobAll = lane; jobAll < 8u; jobAll += 32u) {
@@ -169,7 +181,7 @@ kernel void k_draft_mm(device const uchar* W [[buffer(0)]], device half* x [[buf
     for (uint i = 0; i < cC.get_capacity(); i++) if (cC.is_valid_element(i)) { auto ix = cC.get_multidimensional_index(i); const uint col = row0 + uint(ix[0]); if (col < Nout) y[ulong(ix[1]) * Nout + col] = cC[i]; }
 }
 #define DMM(MT, N, SG, QT) template [[host_name("k_draft_mm_m" #MT "_n" #N "_g" #SG "_q" #QT)]] kernel void k_draft_mm<MT, N, SG, QT>(device const uchar*, device half*, device float*, constant uint&, constant uint&, uint, uint, uint, uint);
-DMM(8, 16, 4, 0) DMM(8, 16, 4, 1) DMM(8, 16, 4, 2) DMM(8, 16, 4, 3) DMM(16, 16, 4, 0) DMM(16, 16, 4, 1)
+DMM(8, 16, 4, 0) DMM(8, 16, 4, 1) DMM(8, 16, 4, 2) DMM(8, 16, 4, 3) DMM(8, 16, 4, 4) DMM(16, 16, 4, 0) DMM(16, 16, 4, 1)
 
 // =====================================================================================================================
 // DFlash2 draft layer ops.
@@ -272,3 +284,12 @@ kernel void k_draft_ctx_kv(device const float* kproj [[buffer(0)]], device const
 
 // float -> half conversion (activations handed to k_draft_mm and to the shared PTQ1_0 head).
 kernel void k_f2h(device const float* src [[buffer(0)]], device half* dst [[buffer(1)]], constant uint& n [[buffer(2)]], uint i [[thread_position_in_grid]]) { if (i < n) dst[i] = half(src[i]); }
+
+// PQ2_0 probe: decode one 128-weight block to floats for validation against ggml's dequantize_row_pq2_0.
+kernel void k_dq_pq2(device const uchar* src [[buffer(0)]], device float* dst [[buffer(1)]], constant uint& K [[buffer(2)]], constant uint& blkIdx [[buffer(3)]], uint e [[thread_position_in_grid]]) {
+    if (e >= 128u) return;
+    device const uchar* bp = src + ulong(blkIdx) * 34ul;
+    const float d = float(as_type<half>(*(device const ushort*)(bp)));
+    const uint code = (bp[2 + (e >> 2)] >> (2u * (e & 3u))) & 3u;
+    dst[e] = d * float(int(code) - 1);
+}
