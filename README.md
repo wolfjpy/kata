@@ -60,7 +60,7 @@ kata run    --model M.gguf --prompt P [--system S] [--raw] [--no-think]
               [--max-tokens N] [--ctx N] [--no-spec] [--no-cache] [--exact]
 kata chat   --model M.gguf [same options]
 kata kl-eval --model M.gguf --file corpus.txt [--tokens N] [--save-ref R.bin | --ref R.bin]
-kata verify-check --model M.gguf ...
+kata verify-check --model M.gguf --ids "$(cat prompt.ids)"   # verifies the T=2 pass against exact single-token decode
 ```
 
 Quality / performance switches:
