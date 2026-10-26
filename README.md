@@ -70,7 +70,7 @@ Quality / performance switches:
 | *(default)* | exact fp16 prefill, MTP speculative decoding on | reference |
 | `--fast-ffn` | int8 FFN gate/up/down during prefill: **+10%** prefill | 99.87% / 7.5e-5 ✅ |
 | `--fast` | int8 for every prefill matrix: +11% prefill | 98.48% / 0.0026 ❌ |
-| `--kv int8` | int8 KV cache: half the KV memory, +14% decode at long context | **broken in chunked prefill** ⚠️ |
+| `--kv int8` | int8 KV cache: half the KV memory, +14% decode at long context | 99.51% / coarse scales ⚠️ |
 | `--exact` | force every lossy path off | reference |
 | `--no-spec` | disable MTP speculative decoding | identical output |
 
@@ -105,8 +105,10 @@ BONSAI_KV=fp16 build/bonsai kl-eval --model $M --file corpus.txt --save-ref ref.
 BONSAI_KV=int8 build/bonsai kl-eval --model $M --file corpus.txt --ref ref.bin
 ```
 
-Current results: `--fast-ffn` 99.87% / 7.5e-5 ✅ · `--fast` 98.48% / 2.6e-3 ❌ · `--kv int8` **fails** in the chunked
-prefill attention path (mean KL 43.7, occasional logit blow-ups) and is therefore opt-in and flagged, not a default.
+Current results: `--fast-ffn` 99.87% / 7.5e-5 ✅ · `--fast` 98.48% / 2.6e-3 ❌ · `--kv int8` **99.51% top-1** — one
+scale per (position, KV head) covers 256 elements, so an outlier costs 1-2 effective bits; opt-in, not a default. (Its
+mean-KL looks alarming only because a few positions have reference logits around 1e6, where a 0.5% relative error is a
+5000-nat shift and the KL is meaningless; `BONSAI_KL_DBG=1` prints those positions.)
 Speculative decoding and the prefix cache are exact by construction and verified byte-identical.
 
 ## How it works

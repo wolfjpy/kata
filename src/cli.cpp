@@ -200,9 +200,10 @@ int cmdKlEval(int argc, char** argv) {
     const int V = (int)bonsai::kVocab; const int n = (int)ids.size(); printf("corpus: %d tokens, chunk %d, comparing the last %d positions of each chunk\n", n, chunk, keep);
     const bool single = !saveRef.empty() || !cmpRef.empty();   // --save-ref / --ref: one pass with the configuration of this process (e.g. BONSAI_KV=int8) instead of exact-vs-int8 in one process
     FILE* sp = fopen(single ? (saveRef.empty() ? cmpRef.c_str() : saveRef.c_str()) : spill.c_str(), single && saveRef.empty() ? "rb" : "wb+"); if (!sp) { perror("spill"); return 1; }
+    int gbase = 0;
     auto pass = [&](bool int8, auto&& onLogits) {
         eng.setI8(int8 ? i8spec : ""); eng.resetState();
-        for (int pos = 0; pos < n; pos += chunk) { const int m = std::min(chunk, n - pos); const int nl = std::min(keep, m); std::vector<int> t(ids.begin() + pos, ids.begin() + pos + m); eng.prefill(t.data(), (uint32_t)m, (uint32_t)pos, -1, true, (uint32_t)nl); onLogits(eng.logitsAll(), nl); }
+        for (int pos = 0; pos < n; pos += chunk) { const int m = std::min(chunk, n - pos); const int nl = std::min(keep, m); gbase = pos + (m - nl); std::vector<int> t(ids.begin() + pos, ids.begin() + pos + m); eng.prefill(t.data(), (uint32_t)m, (uint32_t)pos, -1, true, (uint32_t)nl); onLogits(eng.logitsAll(), nl); }
     };
     if (!saveRef.empty()) { pass(i8given, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fclose(sp); printf("saved the reference logits of this configuration to %s\n", saveRef.c_str()); return 0; }
     if (!single) { pass(false, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fflush(sp); fseek(sp, 0, SEEK_SET); }
@@ -215,6 +216,7 @@ int cmdKlEval(int argc, char** argv) {
             double za = 0, zb = 0; for (int k = 0; k < V; k++) { za += std::exp((double)a[k] - ma); zb += std::exp((double)b[k] - mb); }
             const double la = std::log(za) + ma, lb = std::log(zb) + mb; double kl = 0, ad = 0;
             for (int k = 0; k < V; k++) { const double l = (double)a[k] - la, p = std::exp(l); if (p > 1e-12) kl += p * (l - ((double)b[k] - lb)); ad = std::max(ad, (double)std::fabs(a[k] - b[k])); }
+            if (getenv("BONSAI_KL_DBG") && kl > 1.0) fprintf(stderr, "  [bad] pos %d (row %d of chunk) KL %.3e logitmax ref %.4g / int8 %.4g\n", gbase + r, r, kl, ma, mb);
             sumKl += kl; maxKl = std::max(maxKl, kl); sumAbs = std::max(sumAbs, ad); cnt++; agree += (ba == bb);
         }
         printf("\r  compared %zu positions, running mean KL %.3e, top-1 %.2f%%", cnt, sumKl / cnt, 100.0 * agree / cnt); fflush(stdout);

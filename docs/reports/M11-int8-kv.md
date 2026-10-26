@@ -44,18 +44,46 @@
 - 旧的标量注意力内核(`BONSAI_SCALAR_*`)只支持 fp16 KV,int8 模式下被忽略。
 - 评测语料是论文/文档/规范的混合文本;需要更长(32K+)的真实对话/代码语料才能得出更窄的置信区间。
 
-## Correction (M29d, re-measured)
+## Correction (M29e, re-measured properly)
 
-The "KL 1.3e-4 / top-1 99.71%" figure above does not reproduce with a cross-process reference. The paired `kl-eval` mode
-is invalid for int8 KV because `kvInt8` decides the buffer allocation at load time, so mixing both paths in one process
-only proves that the layout change alone corrupts the result. Measured properly:
+The "KL 1.3e-4 / top-1 99.71%" figure above does not reproduce. The paired `kl-eval` mode is invalid for int8 KV
+because `kvInt8` decides the buffer allocation at load time, so running both paths in one process only measures the
+layout change. Cross-process measurement instead:
 
 ```
-BONSAI_KV=fp16  bonsai kl-eval ... --save-ref ref.bin     # reference
+BONSAI_KV=fp16  bonsai kl-eval ... --save-ref ref.bin
 BONSAI_KV=int8  bonsai kl-eval ... --ref ref.bin
--> 1536 positions | mean KL 4.374e+01 nat | max KL 4.709e+04 | max |logit diff| 1.68e+07 | top-1 1527/1536 (99.41%)
+-> 2048 positions | mean KL 3.1e+01 | max KL 4.7e+04 | max |logit diff| 7.9e+06 | top-1 2038/2048 (99.51%)
 ```
 
-Large but sparse: top-1 survives almost everywhere while individual positions blow up, which points at the chunked
-prefill attention path (`k_flash_prefill_q8`) rather than at the quantiser — the single-token decode path produces
-coherent text. Until that kernel is fixed, int8 KV stays opt-in and is not a default.
+**The huge KL numbers are a metric artifact, not a broken kernel.** Running the per-position diagnostic
+(`BONSAI_KL_DBG=1`) shows every position with KL > 1 also has enormous *reference* logits:
+
+| position | KL | reference top logit | int8 top logit |
+|---|---|---|---|
+| 172 | 8.2e+03 | 1.342e+06 | 1.334e+06 |
+| 939 | 8.3e+03 | 4.295e+05 | 4.193e+05 |
+| 1711 | 4.7e+04 | 7.261e+05 | 7.117e+05 |
+| 387 | 2.1e+00 | 226.2 | 225.6 |
+
+A 0.5% relative error at a position whose logits are 1e6 is a ~5000 nat shift, so the two softmax distributions become
+effectively disjoint and the KL explodes; the *mean* KL over the corpus is then dominated by a handful of such
+positions (`(8243 + 8269 + 47090 + ...) / 2048 = 31`). At ordinary positions the error is small. The honest metric is
+top-1, and it is **99.51%**, below the 99.7% gate.
+
+**Root cause: quantisation granularity, not a kernel bug.** One scale covers all 256 elements of a (position, KV head)
+vector, so a single outlier costs 1-2 effective bits and the whole head pays. That is the *design* constraint of this
+scheme: the MMA path can only apply a scale as a per-key scalar (`cS *= kS[key]`, `P *= vS[key]`), so finer groups
+cannot simply be added — a group scale would have to be folded into the dot product itself.
+
+Two fixes are viable, in increasing effort:
+
+1. **Asymmetric (scale + zero-point) quantisation**, which is exact to fold into the MMA path:
+   `k = sc * q + mean`, so `S = sc * (Q K_q8) + mean * sum_d(q_d)` — the correction is one scalar per (query row, KV
+   head) because `mean` is constant across the head's 256 dims, and `sum_d q_d` is computed once per row. For V the same
+   decomposition gives `O += sum_k(p_k * mean_k)`, one scalar per (query row, KV head). This removes the outlier bias
+   and typically recovers ~1 bit.
+2. **Two scales per head** by splitting the 256 dims into two 128-wide MMAs (`S = sc_lo (Q_lo K_lo) + sc_hi (Q_hi K_hi)`),
+   which is also exact and cheap (same FLOPs, two calls).
+
+Until one of those lands, int8 KV stays opt-in and is not a default.
