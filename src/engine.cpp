@@ -15,7 +15,11 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
     if (!gpu.init(metallib.c_str())) return false;
     // ---- verify the GGUF against the compile-time config
     auto need = [&](const char* k, uint64_t v) { auto it = gg.u32.find(k); if (it == gg.u32.end() || it->second != v) { fprintf(stderr, "config mismatch: %s expected %llu got %llu\n", k, (unsigned long long)v, it == gg.u32.end() ? 0ull : (unsigned long long)it->second); exit(1); } };
-    need("qwen35.block_count", kAllBlocks); need("qwen35.embedding_length", kHidden); need("qwen35.feed_forward_length", kFfn);
+    {   // the base PTQ1_0 file has 64 blocks; the mtp bundles add blk.64 (the MTP head) for 65
+        auto it = gg.u32.find("qwen35.block_count");
+        const uint64_t bc = it == gg.u32.end() ? 0 : it->second;
+        if (bc != 64 && bc != kAllBlocks) { fprintf(stderr, "config mismatch: qwen35.block_count expected 64 or %u got %llu\n", kAllBlocks, (unsigned long long)bc); exit(1); }
+    } need("qwen35.embedding_length", kHidden); need("qwen35.feed_forward_length", kFfn);
     need("qwen35.attention.head_count", kHeads); need("qwen35.attention.head_count_kv", kKvHeads); need("qwen35.ssm.conv_kernel", kGdnConvK);
     need("qwen35.ssm.time_step_rank", kGdnVHeads); need("qwen35.ssm.group_count", kGdnKHeads); need("qwen35.ssm.state_size", kGdnKDim); need("qwen35.full_attention_interval", kFullAttnEvery);
     need("prism.hadamard.block_size", kHadBlock);
