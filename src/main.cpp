@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
         for (int i = 0; i < verifyN; i++) { eng.verify2(vt, (uint32_t)ntok, am); eng.commit2(false); }
         double vdt = std::chrono::duration<double>(std::chrono::steady_clock::now() - v0).count(); printf("verify2: %d passes in %.3f s = %.2f ms/pass\n", verifyN, vdt, vdt / verifyN * 1e3);
     }
+    if (const char* at = getenv("BONSAI_ALU")) { eng.aluT = (uint32_t)atoi(at); fprintf(stderr, "[alu] verification GEMV path = %u token rows\n", eng.aluT); }
     if (vwidth > 0) {   // wide verification: T tokens per round, accept only row 0 -> must reproduce the plain greedy continuation
         const int T = vwidth; if (T < 2 || T > (int)Engine::kMaxVerify) { fprintf(stderr, "--vwidth 2..%u\n", Engine::kMaxVerify); return 1; }
         std::vector<int> seq = toks; int am[Engine::kMaxVerify]; double best = 1e9; int mismatch = 0;

@@ -71,6 +71,7 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
         pStage = gpu.alloc((size_t)17408 * 5120 * 2); pPM = gpu.alloc(256 * 24 * 8 * 4); pPL = gpu.alloc(256 * 24 * 8 * 4); pPA = gpu.alloc((size_t)256 * 24 * 8 * 256 * 4);
     }
     if (dbgTokens) { dbgRes = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); dbgBlk = gpu.alloc((size_t)kLayers * dbgTokens * kHidden * 4); }
+    ilvBuf = gpu.alloc((size_t)2048 * 17408 * 2);   // interleaved half2 activations for the ALU verification path
     decQp = gpu.alloc(4 * 16 * 256 * 2); decAcc = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 256 * 4); decM = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 4); decL = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 4);
     loadMtp();
     // M26: wide verification scratch (snapshots of the GDN state per accepted-prefix length, the window's qkv rows, its tokens)
@@ -325,6 +326,7 @@ void Engine::loadMtp() {
     mtp.attnNorm = T("blk.64.attn_norm.weight"); mtp.postNorm = T("blk.64.post_attention_norm.weight"); mtp.wq = T("blk.64.attn_q.weight"); mtp.wk = T("blk.64.attn_k.weight"); mtp.wv = T("blk.64.attn_v.weight");
     mtp.wo = T("blk.64.attn_output.weight"); mtp.qNorm = T("blk.64.attn_q_norm.weight"); mtp.kNorm = T("blk.64.attn_k_norm.weight"); mtp.ffnGate = T("blk.64.ffn_gate.weight"); mtp.ffnUp = T("blk.64.ffn_up.weight"); mtp.ffnDown = T("blk.64.ffn_down.weight");
     const size_t R = 4;
+    mHz = gpu.alloc(5120 * 2);
     mK = gpu.alloc((size_t)maxCtx * kKvDim * 2); mV = gpu.alloc((size_t)maxCtx * kKvDim * 2); mTok = gpu.alloc(R * 4); mE = gpu.alloc(R * 5120 * 4); mHin = gpu.alloc(R * 5120 * 4); mCat = gpu.alloc(R * 10240 * 4);
     mX = gpu.alloc(R * 5120 * 4); mH = gpu.alloc(R * 5120 * 4); mQfull = gpu.alloc(R * kQProjOut * 4); mKp = gpu.alloc(R * kKvDim * 4); mVp = gpu.alloc(R * kKvDim * 4); mQ = gpu.alloc(R * 6144 * 4); mGate = gpu.alloc(R * 6144 * 4);
     mAttnO = gpu.alloc(R * 6144 * 4); mTmp = gpu.alloc(R * 5120 * 4); mY = gpu.alloc(R * 5120 * 4); mG = gpu.alloc(R * 17408 * 4); mU = gpu.alloc(R * 17408 * 4); mPM = gpu.alloc(R * 24 * 8 * 4); mPL = gpu.alloc(R * 24 * 8 * 4); mPA = gpu.alloc(R * 24 * 8 * 256 * 4);
@@ -336,7 +338,7 @@ void Engine::loadMtp() {
 int Engine::mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits) {
     if (!hasMtp || R == 0 || R > 2) { fprintf(stderr, "mtpRows: bad call\n"); exit(1); }
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
-    memcpy(mTok->contents(), toks, R * 4); memcpy(mHin->contents(), hin, (size_t)R * 5120 * 4);
+    memcpy(mTok->contents(), toks, R * 4); memcpy(mHin->contents(), hin, (size_t)R * 5120 * 4); mtpLastR = R;
     const uint32_t H = kHidden; const std::string tn = R == 1 ? "k_gemv_q8_t1" : "k_gemv_q8_t2";
     MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     auto gq = [&](uint64_t off, MTL::Buffer* x, MTL::Buffer* y, uint32_t K, uint32_t N) { e->setComputePipelineState(gpu.pipe(tn.c_str())); e->setBuffer(wbuf, off, 0); e->setBuffer(x, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4); e->dispatchThreadgroups(MTL::Size((N + 7) / 8, 1, 1), MTL::Size(256, 1, 1)); };
@@ -363,6 +365,9 @@ int Engine::mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0
     { uint32_t n = R * kFfn; e->setComputePipelineState(gpu.pipe("k_swiglu")); e->setBuffer(mG, 0, 0); e->setBuffer(mU, 0, 1); e->setBuffer(mG, 0, 2); e->setBytes(&n, 4, 3); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1)); }
     gq(mtp.ffnDown, mG, mTmp, kFfn, H);
     add(mTmp, mY, mX, R * H);                         // FFN residual -> block output (mX reused)
+    {   // the chained draft's next-step input is output_norm of that residual (the trunk's h convention), not the raw block output
+        uint32_t w = 5120; e->setComputePipelineState(gpu.pipe("k_rmsnorm_rows_h")); e->setBuffer(mX, (uint64_t)(R - 1) * H * 4, 0); e->setBuffer(wbuf, outNorm, 1); e->setBuffer(mHz, 0, 2);
+        e->setBytes(&w, 4, 3); e->dispatchThreadgroups(MTL::Size(1, 1, 1), MTL::Size(256, 1, 1)); }
     if (wantLogits) {
         uint32_t flags = 0; const uint64_t rowOff = (uint64_t)(R - 1) * H * 4;
         e->setComputePipelineState(gpu.pipe("k_add_rms_fwht")); e->setBuffer(mX, rowOff, 0); e->setBuffer(mX, rowOff, 1); e->setBuffer(gsAll, (uint64_t)(kLayers * 2 + 1) * H * 4, 2); e->setBuffer(bufXp, 0, 3);
@@ -529,6 +534,14 @@ std::string Engine::i8Names() const { std::string r; for (uint32_t i = 0; i < 10
 // on the matrix unit (k_wide, padded to 16 rows). The GDN recurrence keeps a snapshot per prefix length, so accepting F tokens is a copy of one snapshot.
 void Engine::dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t MT) {
     if (sk("v_gemv")) return;
+    if (aluT == 2 || aluT == 4) {   // ALU path: interleave the activations, then the LUT+half2 kernel for T token rows
+        if (aluT == 2) { e->setComputePipelineState(gpu.pipe("k_ilv2")); e->setBuffer(xh, 0, 0); e->setBuffer(ilvBuf, 0, 1); e->setBytes(&K, 4, 2); e->dispatchThreads(MTL::Size(K, 1, 1), MTL::Size(256, 1, 1));
+            e->setComputePipelineState(gpu.pipe("k_gemv_lut2_nr4_sg4")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(ilvBuf, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4);
+            e->dispatchThreadgroups(MTL::Size((N + 15) / 16, 1, 1), MTL::Size(128, 1, 1)); return; }
+        e->setComputePipelineState(gpu.pipe("k_ilv4")); e->setBuffer(xh, 0, 0); e->setBuffer(ilvBuf, 0, 1); e->setBytes(&K, 4, 2); e->dispatchThreads(MTL::Size(K, 1, 1), MTL::Size(256, 1, 1));
+        e->setComputePipelineState(gpu.pipe("k_gemv_lutp2_nr2_sg4")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(ilvBuf, 0, 1); e->setBuffer(y, 0, 2); e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4);
+        e->dispatchThreadgroups(MTL::Size((N + 7) / 8, 1, 1), MTL::Size(128, 1, 1)); return;
+    }
     const uint32_t rows = 64;   // k_wide_m16_n16_k128_g4: 16 output rows per simdgroup x 4 simdgroups per threadgroup
     e->setComputePipelineState(gpu.pipe("k_wide_m16_n16_k128_g4")); e->setBuffer(wbuf, wOff, 0); e->setBuffer(xh, 0, 1); e->setBuffer(y, 0, 2);
     e->setBytes(&K, 4, 3); e->setBytes(&N, 4, 4); e->dispatchThreadgroups(MTL::Size((N + rows - 1) / rows, 1, 1), MTL::Size(128, 1, 1));

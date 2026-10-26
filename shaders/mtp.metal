@@ -217,3 +217,11 @@ kernel void k_gdn_ab2(device const bfloat* Wa [[buffer(0)]], device const bfloat
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (tid == 0) { const uint o = isb ? 48u + r : r; ab[o] = part[0][0] + part[0][1] + part[0][2] + part[0][3]; ab[128u + o] = part[1][0] + part[1][1] + part[1][2] + part[1][3]; }
 }
+
+// ---- activation layout for the ALU verification GEMVs: row-major fp16 [T][K] -> interleaved half2 [K][T/2] (keeps norm/FWHT kernels untouched) ----
+kernel void k_ilv2(device const half* x [[buffer(0)]], device half2* y [[buffer(1)]], constant uint& K [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i >= K) return; y[i] = half2(x[i], x[K + i]);
+}
+kernel void k_ilv4(device const half* x [[buffer(0)]], device half2* y [[buffer(1)]], constant uint& K [[buffer(2)]], uint i [[thread_position_in_grid]]) {
+    if (i >= K) return; y[2 * i] = half2(x[i], x[K + i]); y[2 * i + 1] = half2(x[2 * K + i], x[3 * K + i]);
+}

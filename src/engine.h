@@ -44,6 +44,8 @@ public:
     const float* hidden() const { return (const float*)bufH->contents(); }
     // Runs R (<= 2) MTP rows: row r pairs hidden state hin[r] with token toks[r] at position pos0 + r. Returns the greedy token predicted after the last row (logits in logits()).
     int mtpRows(uint32_t R, const int* toks, const float* hin, uint32_t pos0, bool wantLogits = true);
+    // the chained draft's input for the next step: output_norm of the MTP block's own residual (same convention as the trunk's h)
+    void mtpHidden(float* dst) const { const _Float16* h = (const _Float16*)mHz->contents(); for (int i = 0; i < 5120; i++) dst[i] = (float)h[i]; }
     // Feeds n tokens at positions [pos0, pos0+n) (stepwise for short runs, batched prefill otherwise), keeps the MTP K/V cache current when mtpTrack is set, returns the greedy next token.
     bool mtpTrack = false;
     int feed(const int* toks, uint32_t n, uint32_t pos0, bool wantLogits = true);
@@ -56,6 +58,8 @@ public:
     void commit2(bool acceptBoth);
     const float* verifyLogits(int row) const { return (const float*)bufLogitsAll->contents() + (size_t)row * bonsai::kVocab; }
     void verifyHidden(int row, float* dst) const;   // post-final-norm hidden state of verified token `row`
+    // verification GEMV path: 0 = wide matrix-unit kernel (T <= 8), 2 or 4 = ALU LUT+half2 kernel for exactly that many token rows
+    uint32_t aluT = 0;
     uint32_t gemmGroup = getenv("BONSAI_GM") ? (uint32_t)atoi(getenv("BONSAI_GM")) : 32u;   // GEMM tile order: groups of g consecutive M tiles share a B strip (0 = N-fast, much slower)
     // ---- raw access to the persistent state for the prefix cache (src/ckpt.cpp)
     uint8_t* gdnPtr() const { return (uint8_t*)gdnState->contents(); }
@@ -111,7 +115,9 @@ private:
     MTL::Buffer *bufXs[2], *bufXp, *bufH, *bufQkv, *bufConv, *bufZ, *bufAlpha, *bufBeta, *bufGdnOut, *bufTmp, *bufPM, *bufPL, *bufPA, *bufQfull, *bufK, *bufV, *bufQ, *bufGate, *bufAttnO, *bufG, *bufU, *bufLogits, *bufTok, *bufArg;
     MTL::Buffer *sg5120, *sg6144, *sg17408, *gsAll, *gdnState, *convState, *kcache, *vcache, *dbgRes, *dbgBlk;
     uint32_t nGdn = 0, nAttn = 0;
+    uint32_t mtpLastR = 1;
     struct MtpW { uint64_t ehProj, attnNorm, postNorm, wq, wk, wv, wo, qNorm, kNorm, ffnGate, ffnUp, ffnDown, enorm, hnorm, headNorm; } mtp{};
+    MTL::Buffer *mHz = nullptr;
     MTL::Buffer *mK, *mV, *mTok, *mE, *mHin, *mCat, *mX, *mH, *mQfull, *mKp, *mVp, *mQ, *mGate, *mAttnO, *mTmp, *mY, *mG, *mU, *mPM, *mPL, *mPA;
     MTL::Buffer *pXq, *pSx, *pStage8, *pStageSW, *bufLogitsAll;
     // prefill buffers (rows padded to kMaxChunk)
@@ -125,6 +131,7 @@ private:
     void dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t MT);
 
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
+    MTL::Buffer *ilvBuf = nullptr;
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
     void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0);
     MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
