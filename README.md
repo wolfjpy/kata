@@ -1,5 +1,7 @@
 # Kata
 
+![Kata — Metal 4 inference engine for Bonsai-2-27B](docs/assets/social-preview.png)
+
 A from-scratch **Metal inference engine** for [Bonsai-2-27B](https://huggingface.co/prism-ml) — a 27B hybrid-attention
 model whose weights are stored at **1.58 bits** (ternary ±1 with fp16 group scales) — running entirely on-device in a
 16 GB Apple laptop.
