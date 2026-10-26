@@ -19,8 +19,13 @@ struct Draft {
     uint32_t signOff[4] = {0, 0, 0, 0};                    // element offsets of those widths inside `signs`
     uint32_t signOffFor(uint32_t W) const;
     // decoder tag for k_draft_mm: 0 = Q4_K, 1 = Q6_K, 2 = Q2_K, 3 = Q3_K
-    int qtypeOf(uint64_t off) const { for (auto& kv : gg.tensors) if (kv.second.fileOffset == off) {
-        switch (kv.second.type) { case GGML_Q6_K: return 1; case GGML_Q2_K: return 2; case GGML_Q3_K: return 3; case GGML_PQ2_0: return 4; default: return 0; } } return 0; }
+    int qtypeOf(uint64_t off) const {
+        for (auto& kv : gg.tensors) {
+            if (kv.second.fileOffset != off) continue;
+            switch (kv.second.type) { case GGML_Q6_K: return 1; case GGML_Q2_K: return 2; case GGML_Q3_K: return 3; case GGML_PQ2_0: return 4; default: return 0; }
+        }
+        return 0;
+    }
     struct LayerW { uint64_t q = 0, k = 0, v = 0, o = 0, qNorm = 0, kNorm = 0, attnNorm = 0, attnCb = 0, attnCp = 0,
                     gate = 0, up = 0, down = 0, ffnNorm = 0, ffnCb = 0, ffnCp = 0; };
     LayerW L[kLayers];

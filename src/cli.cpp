@@ -57,7 +57,7 @@ struct Session {
 }
 
 int cmdRun(int argc, char** argv, bool interactive) {
-    std::string model, prompt, system, effort = "xhigh", metallib = "build/kata.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("KATA_CHAIN") != nullptr, chainFixed = false; int maxTokens = 512; uint32_t ctx = 8192;
+    std::string model, prompt, system, effort = "xhigh", metallib = "build/kata.metallib"; bool haveFile = false, raw = false, noThink = false, stats = true, noSpec = false, chain = getenv("KATA_CHAIN") != nullptr; int maxTokens = 512; uint32_t ctx = 8192;
     CacheConfig cc; SamplerParams sp; sp.seed = (uint64_t)std::chrono::steady_clock::now().time_since_epoch().count(); std::string i8spec; bool i8explicit = false;   // int8 FFN prefill is opt-in: it does not stack with the default int8 KV cache inside the quality gate
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i]; auto nx = [&]() { return std::string(argv[++i]); };
