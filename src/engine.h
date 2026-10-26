@@ -106,7 +106,9 @@ private:
     MTL::Buffer *pTok, *pX[2], *pXp, *pHh, *pQkv, *pZ, *pConv, *pAB, *pGb, *pQk, *pRaw, *wabAll, *pGdnOut, *pTmp, *pQfull, *pK, *pV, *pQ, *pQh, *pGate, *pAttnO, *pG, *pU, *pStage, *pPM, *pPL, *pPA;
     static constexpr size_t kHiddenBytes = 5120 * 4;
     MTL::Buffer *gdnSet[3] = {}, *convSet[3] = {}, *pHid = nullptr, *hPrevBuf = nullptr; int stCur = 0;
-    MTL::Buffer *gdnSnap = nullptr, *vTok = nullptr, *vQkv = nullptr; int vBase = 0;   // snapshots of the verify window (snap[0] = the input state) and the window's tokens
+    MTL::Buffer *vTok = nullptr, *vQkv = nullptr, *vRec = nullptr; int vBase = 0;   // snapshots of the verify window (snap[0] = the input state) and the window's tokens
+    // per-layer replay records of a verify window: conv (T x 10240), qk (T x 4096) and gates (T x 96)
+    static constexpr uint32_t kRecRow = 10240 + 4096 + 96;
     void dWide(MTL::ComputeCommandEncoder* e, uint64_t wOff, MTL::Buffer* xh, MTL::Buffer* y, uint32_t K, uint32_t N, uint32_t MT);
 
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);

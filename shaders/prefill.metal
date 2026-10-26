@@ -499,8 +499,10 @@ kernel void k_gdn_rec_snap(device const float* conv [[buffer(0)]], device const 
         for (uint k4 = 0; k4 < 8; k4++) { float4 kk = kp[k4], qq = qp[k4]; st[4*k4] += kk.x * d; st[4*k4+1] += kk.y * d; st[4*k4+2] += kk.z * d; st[4*k4+3] += kk.w * d; y += st[4*k4] * qq.x + st[4*k4+1] * qq.y + st[4*k4+2] * qq.z + st[4*k4+3] * qq.w; }
         y += simd_shuffle_xor(y, 1); y += simd_shuffle_xor(y, 2);
         if (part == 0) raw[ulong(t) * 6144ul + hv * 128 + v] = y * 0.08838834764831845f;
-        device float* so = snaps + (ulong(t) + 1ul) * snapStride;
-        for (uint k = 0; k < 32; k++) so[off + k * 128u] = st[k];
+        if (snapStride != 0u) {   // 0: leave the committed state untouched and replay it after the accepted prefix is known
+            device float* so = snaps + (ulong(t) + 1ul) * snapStride;
+            for (uint k = 0; k < 32; k++) so[off + k * 128u] = st[k];
+        }
     }
 }
 
@@ -512,4 +514,18 @@ kernel void k_gdn_conv_snap(device const float* qkv [[buffer(0)]], device const 
         const int idx = int(F) + int(k) - 3;                       // index into the extended history: <0 -> old state
         out[k * C + c] = idx < 0 ? old[(uint)(idx + 3) * C + c] : qkv[(ulong)idx * C + c];
     }
+}
+
+// alpha/beta for a verify window: grid (96, T), 128 threads; row < 48 is alpha, else beta (bf16 weights, stride 5120). Writes ab[t][0..47] = alpha, ab[t][48..95] = beta.
+kernel void k_gdn_ab_t(device const bfloat* Wa [[buffer(0)]], device const bfloat* Wb [[buffer(1)]], device const half* h [[buffer(2)]], device float* ab [[buffer(3)]],
+                       uint2 tg [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    threadgroup float part[4];
+    const uint row = tg.x, t = tg.y; const bool isb = row >= 48u; const uint r = isb ? row - 48u : row;
+    device const bfloat* w = (isb ? Wb : Wa) + ulong(r) * 5120ul; device const half* hh = h + ulong(t) * 5120ul;
+    float acc = 0.0f;
+    for (uint k = sg * 1280u + lane; k < (sg + 1u) * 1280u; k += 32u) acc += float(w[k]) * float(hh[k]);
+    acc = simd_sum(acc);
+    if (lane == 0) part[sg] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) ab[ulong(t) * 128ul + (isb ? 48u + r : r)] = part[0] + part[1] + part[2] + part[3];
 }

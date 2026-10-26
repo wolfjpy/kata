@@ -109,7 +109,8 @@ int main(int argc, char** argv) {
         std::vector<int> seq = toks; int am[Engine::kMaxVerify]; double best = 1e9; int mismatch = 0;
         for (int r = 0; r < std::max(1, repeat); r++) {
             eng.resetState();
-            eng.prefill(seq.data(), (uint32_t)seq.size(), 0, -1, true, 1);   // build the context once
+            for (size_t off = 0; off < seq.size(); off += Engine::kMaxChunk) { const uint32_t m = (uint32_t)std::min<size_t>(Engine::kMaxChunk, seq.size() - off);
+                eng.prefill(seq.data() + off, m, (uint32_t)off, -1, true, 1); }   // build the context once, in chunks
             int next = eng.logits() ? 0 : 0; { const float* lg = eng.logits(); for (int k = 1; k < (int)nv; k++) if (lg[k] > lg[next]) next = k; }
             uint32_t pos = (uint32_t)seq.size(); int base = next; auto t0 = std::chrono::steady_clock::now();
             for (int g = 0; g < gen; g++) {

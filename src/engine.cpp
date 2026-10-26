@@ -70,9 +70,9 @@ bool Engine::load(const std::string& model, const std::string& metallib, uint32_
     decQp = gpu.alloc(4 * 16 * 256 * 2); decAcc = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 256 * 4); decM = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 4); decL = gpu.alloc((size_t)(maxCtx / 64 + 2) * 4 * 16 * 4);
     loadMtp();
     // M26: wide verification scratch (snapshots of the GDN state per accepted-prefix length, the window's qkv rows, its tokens)
-    gdnSnap = gpu.alloc((size_t)(kMaxVerify + 1) * nGdn * kGdnVHeads * 128 * 128 * 4);
     vQkv = gpu.alloc((size_t)nGdn * kMaxVerify * kGdnQkvDim * 4);
     vTok = gpu.alloc(kMaxVerify * 4); hPrevF16 = gpu.alloc(5120 * 2);
+    vRec = gpu.alloc((size_t)nGdn * kMaxVerify * kRecRow * 4);   // replay records replace 1.2 GB of state snapshots
     return true;
 }
 
@@ -536,9 +536,7 @@ int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     memcpy(vTok->contents(), toks, T * 4); vBase = (int)pos;
     const uint32_t H = kHidden, MT = 16;
-    const uint64_t gstride = (uint64_t)kGdnVHeads * 128 * 128 * 4, gfull = gstride * nGdn;
-    // snapshot 0 = the state we start from (contiguous, one image); snapshot t (t >= 1) at t * gfull + layer offset
-    memcpy(gdnSnap->contents(), gdnState->contents(), gdnBytes());
+    // the verify pass leaves the GDN state untouched; commitWide replays the accepted prefix from the records it wrote (conv, qk, gates)
     MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     int c = 0;
     { e->setComputePipelineState(gpu.pipe("k_embed_b")); e->setBuffer(wbuf, tokEmbd, 0); e->setBuffer(vTok, 0, 1); e->setBuffer(sg5120, 0, 2); e->setBuffer(pX[0], 0, 3); e->dispatchThreadgroups(MTL::Size(5, T, 1), MTL::Size(256, 1, 1)); }
@@ -563,11 +561,15 @@ int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut
             { e->setComputePipelineState(gpu.pipe("k_gdn_conv_t")); e->setBuffer(pQkv, 0, 0); e->setBuffer(convState, (uint64_t)si * 3 * kGdnQkvDim * 4, 1); e->setBuffer(wbuf, L.conv, 2); e->setBuffer(pConv, 0, 3); e->setBytes(&T, 4, 4);
               e->dispatchThreads(MTL::Size(kGdnQkvDim / 4, (T + 15) / 16, 1), MTL::Size(64, 1, 1)); }
             { e->setComputePipelineState(gpu.pipe("k_gdn_qk_b")); e->setBuffer(pConv, 0, 0); e->setBuffer(pQk, 0, 1); e->dispatchThreadgroups(MTL::Size(T, 32, 1), MTL::Size(128, 1, 1)); }
-            if (!sk("v_ab")) dGemm(e, pHh, wabAll, (uint64_t)si * 2 * 5120 * 64 * 2, pAB, 32, H, 128);   // [alpha(48) | beta(48) | pad] per token
+            if (!sk("v_ab")) { e->setComputePipelineState(gpu.pipe("k_gdn_ab_t")); e->setBuffer(wbuf, L.alpha, 0); e->setBuffer(wbuf, L.beta, 1); e->setBuffer(pHh, 0, 2); e->setBuffer(pAB, 0, 3); e->dispatchThreadgroups(MTL::Size(96, T, 1), MTL::Size(128, 1, 1)); }
             { e->setComputePipelineState(gpu.pipe("k_gdn_gates_b")); e->setBuffer(pAB, 0, 0); e->setBuffer(wbuf, L.ssmA, 1); e->setBuffer(wbuf, L.dt, 2); e->setBuffer(pGb, 0, 3); e->setBytes(&T, 4, 4); e->dispatchThreads(MTL::Size(T * 48, 1, 1), MTL::Size(256, 1, 1)); }
-            { uint32_t stride = (uint32_t)gstride, full = (uint32_t)gfull;
-              e->setComputePipelineState(gpu.pipe("k_gdn_rec_snap")); e->setBuffer(pConv, 0, 0); e->setBuffer(pQk, 0, 1); e->setBuffer(pGb, 0, 2); e->setBuffer(gdnSnap, si * gstride, 3);
-              e->setBuffer(gdnSnap, si * gstride, 4); e->setBuffer(pRaw, 0, 5); e->setBytes(&T, 4, 6); uint32_t fullF = full / 4u; e->setBytes(&fullF, 4, 7); e->dispatchThreadgroups(MTL::Size(kGdnVHeads, 16, 1), MTL::Size(32, 1, 1)); (void)stride; }
+            {   // replay mode: the recurrence computes the window's outputs but leaves the committed state alone (no snapshots)
+              e->setComputePipelineState(gpu.pipe("k_gdn_rec_snap")); e->setBuffer(pConv, 0, 0); e->setBuffer(pQk, 0, 1); e->setBuffer(pGb, 0, 2); e->setBuffer(gdnState, (uint64_t)si * (uint64_t)kGdnVHeads * 128 * 128 * 4, 3);
+              e->setBuffer(gdnState, 0, 4); e->setBuffer(pRaw, 0, 5); e->setBytes(&T, 4, 6); uint32_t zero = 0; e->setBytes(&zero, 4, 7); e->dispatchThreadgroups(MTL::Size(kGdnVHeads, 16, 1), MTL::Size(32, 1, 1)); }
+            { const uint64_t base = (uint64_t)si * kMaxVerify * kRecRow * 4; uint32_t n1 = T * kGdnQkvDim, n2 = T * 4096, n3 = T * 96;
+              e->setComputePipelineState(gpu.pipe("k_copy_f32")); e->setBuffer(pConv, 0, 0); e->setBuffer(vRec, base, 1); e->setBytes(&n1, 4, 2); e->dispatchThreads(MTL::Size(n1, 1, 1), MTL::Size(256, 1, 1));
+              e->setBuffer(pQk, 0, 0); e->setBuffer(vRec, base + (uint64_t)kMaxVerify * kGdnQkvDim * 4, 1); e->setBytes(&n2, 4, 2); e->dispatchThreads(MTL::Size(n2, 1, 1), MTL::Size(256, 1, 1));
+              e->setBuffer(pGb, 0, 0); e->setBuffer(vRec, base + (uint64_t)kMaxVerify * (kGdnQkvDim + 4096) * 4, 1); e->setBytes(&n3, 4, 2); e->dispatchThreads(MTL::Size(n3, 1, 1), MTL::Size(256, 1, 1)); }
             { e->setComputePipelineState(gpu.pipe("k_gdn_gnorm_b")); e->setBuffer(pRaw, 0, 0); e->setBuffer(pZ, 0, 1); e->setBuffer(wbuf, L.ssmNorm, 2); e->setBuffer(pGdnOut, 0, 3); e->dispatchThreadgroups(MTL::Size(T, 48, 1), MTL::Size(128, 1, 1)); }
             fwht(pGdnOut, nullptr, sg6144, 6144, 2);
             dWide(e, L.ssmOut, pXp, pTmp, 6144, H, MT);
@@ -580,10 +582,16 @@ int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut
               e->setBuffer(pQ, 0, 5); e->setBuffer(pGate, 0, 6); e->setBuffer(kvInt8 ? kvScrK : kcache, kvInt8 ? 0 : kvOff, 7); e->setBuffer(kvInt8 ? kvScrV : vcache, kvInt8 ? 0 : kvOff, 8);
               e->setBytes(&pos, 4, 9); e->setBytes(&h00, 4, 10); e->setBytes(&cOff, 4, 11); e->dispatchThreadgroups(MTL::Size(32, T, 1), MTL::Size(256, 1, 1));
               if (kvInt8) dKvQuant(e, T, pos, ai); }
-            { uint32_t n = T * 6144; e->setComputePipelineState(gpu.pipe("k_cvt_q_half")); e->setBuffer(pQ, 0, 0); e->setBuffer(pQh, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1));
+            static const bool vflash = getenv("BONSAI_VFLASH") != nullptr;   // flash needs one threadgroup per KV head (far too few for a short window) but it is the only path that reads an int8 KV cache
+            if (vflash || kvInt8) { uint32_t n = T * 6144; e->setComputePipelineState(gpu.pipe("k_cvt_q_half")); e->setBuffer(pQ, 0, 0); e->setBuffer(pQh, 0, 1); e->setBytes(&n, 4, 2); e->dispatchThreads(MTL::Size(n, 1, 1), MTL::Size(256, 1, 1));
               e->setComputePipelineState(gpu.pipe(kvInt8 ? "k_flash_prefill_q8" : "k_flash_prefill")); e->setBuffer(pQh, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pGate, 0, 3); e->setBuffer(pAttnO, 0, 4);
               e->setBytes(&pos, 4, 5); e->setBytes(&T, 4, 6); e->setBuffer(kvInt8 ? kscale : pQh, kvInt8 ? scLayerOff(ai) : 0, 7); e->setBuffer(kvInt8 ? vscale : pQh, kvInt8 ? scLayerOff(ai) : 0, 8);
               e->dispatchThreadgroups(MTL::Size((T + 15) / 16, kKvHeads, 1), MTL::Size(192, 1, 1)); }
+            else { uint32_t S = std::max<uint32_t>(1, std::min<uint32_t>(32, (pos + T) / 64)), firstPos = 0;
+              e->setComputePipelineState(gpu.pipe("k_attn_split_b")); e->setBuffer(pQ, 0, 0); e->setBuffer(kcache, kvOff, 1); e->setBuffer(vcache, kvOff, 2); e->setBuffer(pPM, 0, 3); e->setBuffer(pPL, 0, 4); e->setBuffer(pPA, 0, 5); e->setBytes(&pos, 4, 6); e->setBytes(&firstPos, 4, 7);
+              e->dispatchThreadgroups(MTL::Size(S, kKvHeads, T), MTL::Size(256, 1, 1));
+              e->setComputePipelineState(gpu.pipe("k_attn_combine_b")); e->setBuffer(pPM, 0, 0); e->setBuffer(pPL, 0, 1); e->setBuffer(pPA, 0, 2); e->setBuffer(pGate, 0, 3); e->setBuffer(pAttnO, 0, 4); e->setBytes(&S, 4, 5);
+              e->dispatchThreadgroups(MTL::Size(kHeads, T, 1), MTL::Size(256, 1, 1)); }
             fwht(pAttnO, nullptr, sg6144, 6144, 3);
             dWide(e, L.wo, pXp, pTmp, 6144, H, MT);
         }
@@ -606,10 +614,17 @@ int Engine::verifyWide(const int* toks, uint32_t T, uint32_t pos, int* argmaxOut
 // Accepts the first `accept` tokens of the window: restore the matching GDN snapshot, rebuild the conv state from the window's qkv rows, and bring the MTP cache
 // (rows pos+1 .. pos+accept-1) and hPrev up to date.
 void Engine::commitWide(uint32_t accept) {
-    const uint64_t gstride = (uint64_t)kGdnVHeads * 128 * 128 * 4, gfull = gstride * nGdn;
-    uint32_t T = 0; { /* the window length is implied by accept <= kMaxVerify */ }
-    memcpy(gdnState->contents(), (uint8_t*)gdnSnap->contents() + accept * gfull, gdnBytes());
     if (accept == 0) return;
+    NS::AutoreleasePool* pool0 = NS::AutoreleasePool::alloc()->init();
+    {   // GDN: replay the accepted prefix from the records the verify pass wrote (state read and written once, not once per token)
+        MTL::CommandBuffer* cb0 = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e0 = cb0->computeCommandEncoder();
+        const uint32_t F = accept;
+        for (uint32_t si = 0; si < (uint32_t)nGdn; si++) { const uint64_t base = (uint64_t)si * kMaxVerify * kRecRow * 4, so = (uint64_t)si * (uint64_t)kGdnVHeads * 128 * 128 * 4;
+          e0->setComputePipelineState(gpu.pipe("k_gdn_rec_b2")); e0->setBuffer(vRec, base, 0); e0->setBuffer(vRec, base + (uint64_t)kMaxVerify * kGdnQkvDim * 4, 1); e0->setBuffer(vRec, base + (uint64_t)kMaxVerify * (kGdnQkvDim + 4096) * 4, 2);
+          e0->setBuffer(gdnState, so, 3); e0->setBuffer(pRaw, 0, 4); e0->setBytes(&F, 4, 5); e0->dispatchThreadgroups(MTL::Size(kGdnVHeads, 16, 1), MTL::Size(32, 1, 1)); }
+        e0->endEncoding(); cb0->commit(); cb0->waitUntilCompleted();
+    }
+    pool0->release();
     NS::AutoreleasePool* pool = NS::AutoreleasePool::alloc()->init();
     MTL::CommandBuffer* cb = gpu.queue->commandBuffer(); MTL::ComputeCommandEncoder* e = cb->computeCommandEncoder();
     for (uint32_t il = 0; il < kLayers; il++) {   // conv state: last three columns of the extended history
@@ -617,7 +632,7 @@ void Engine::commitWide(uint32_t accept) {
         e->setComputePipelineState(gpu.pipe("k_gdn_conv_snap")); e->setBuffer(vQkv, (uint64_t)si * kMaxVerify * kGdnQkvDim * 4, 0); e->setBuffer(convState, (uint64_t)si * 3 * kGdnQkvDim * 4, 1);
         e->setBuffer(convState, (uint64_t)si * 3 * kGdnQkvDim * 4, 2); e->setBytes(&F, 4, 3); e->dispatchThreads(MTL::Size(kGdnQkvDim, 1, 1), MTL::Size(256, 1, 1));
     }
-    e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); (void)T; pool->release();
+    e->endEncoding(); cb->commit(); cb->waitUntilCompleted(); pool->release();
     // MTP K/V rows for the newly committed positions and the new hPrev
     if (hasMtp && mtpTrack && accept >= 2) {
         const uint32_t R = accept - 1;                     // rows pos+1 .. pos+accept-1 pair (h[i-1], tok[i])

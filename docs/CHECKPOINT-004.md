@@ -48,7 +48,7 @@ DFlash2 K=7 的实测接受长度(Prism harness,Bonsai 目标模型):代码/推�
 
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
-| **M27a** | 小网格修复:alpha/beta 改成 T 行 GEMV(96×T 个 TG);注意力按 key 分段让 8 行有足够并行度;每层两次 norm 合一个 dispatch | T=8 每轮 ≤ 147 ms(省 12%);`--vwidth 8` 仍逐 token 复现贪心 |
+| **M27a** ✅ 完成(`reports/M27a-small-grid-fixes.md`) | 三处修复:alpha/beta 改 T 行 GEMV、注意力改 key 分段、状态快照改记录+重放(省 1.2 GB) | **T=8 每轮 142 ms(原 177,−20%)**;逐 token 复现贪心;DFlash2 收益上限升到 **+38%** |
 | **M27b** | MTP 链草稿(K=3 → T=4,零新模型):用 MTP 块自己的输出 hidden 作为下一行的输入,MTP 块内串行 3 次 | 推理文本 ≥ 3.1 token/轮(Prism 实测值);端到端 ≥ 28 tok/s,`verifyWide` 路径不变 |
 | **M28** | DFlash2 移植(3–5 天):5 层草稿(plain RMSNorm、QKV、逐头 qk norm、scalar RoPE、非因果滑窗 2048 环形 KV、双抽头动态分组卷积、SwiGLU)+ 目标第 5/19/33/47/61 层残差作条件 + 上下文物化器 + top-16/rank-256 选择器 + **Q4_K_M 解量化**;先只支持 K=7 | 接受长度与 llama.cpp `draft-dflash` 一致(±0.3);代码/推理 ≥ 29 tok/s(现在)、≥ 33(修完 M27a);散文不回归(需要 M29) |
 | **M29** | 宽度自适应:在线 EMA 学每个宽度的 token/ms,散文自动退回 MTP-1 | 散文 ≥ 24 tok/s;代码/推理不回退 |
