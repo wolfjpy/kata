@@ -50,7 +50,7 @@ want the details.
 **Phase 3 — speculation, and what did not work**
 | Document | One line |
 |---|---|
-| [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) | M4: MTP speculative decoding at depth 1 with a 2-wide verification. |
+| [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) · **[.en](reports/M4-mtp-speculative-decoding.en.md)** | M4: MTP speculative decoding at depth 1 with a 2-wide verification. |
 | [`reports/M7-speculation-options.md`](reports/M7-speculation-options.md) · **[.en](reports/M7-speculation-options.en.md)** | M7: the other speculation options (DFlash2, the 2B drafter, deeper MTP chains) and the cost of wide verification. |
 | [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10: sampling-aware drafts — estimated offline, gate not met, implementation deferred. |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) · **[.en](reports/M14-wide-verify-gate.en.md)** | M14: the wide-verification microbenchmark gate; it did not pass, so DFlash2 (M15/M16) was closed. |
@@ -113,7 +113,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 **第三阶段 —— 投机,以及失败的部分**
 | 文档 | 一句话 |
 |---|---|
-| [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) | M4:MTP 投机解码,深度 1、验证宽度 2。 |
+| [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) · **[.en](reports/M4-mtp-speculative-decoding.en.md)** | M4:MTP 投机解码,深度 1、验证宽度 2。 |
 | [`reports/M7-speculation-options.md`](reports/M7-speculation-options.md) · **[.en](reports/M7-speculation-options.en.md)** | M7:其它投机方案(DFlash2、2B 草稿器、更深的 MTP 链)与宽验证的代价。 |
 | [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10:采样感知草稿 —— 离线估计,闸门未达到,实现推迟。 |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) · **[.en](reports/M14-wide-verify-gate.en.md)** | M14:宽验证微基准闸门未通过,DFlash2(M15/M16)结案。 |
