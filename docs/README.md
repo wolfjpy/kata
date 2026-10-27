@@ -39,7 +39,7 @@ want the details.
 |---|---|
 | [`reports/M3-decode-optimization.md`](reports/M3-decode-optimization.md) · **[.en](reports/M3-decode-optimization.en.md)** | M3: decode optimisation — the single-token path becomes bandwidth-bound instead of ALU-bound. |
 | [`reports/M5-prefill.md`](reports/M5-prefill.md) · **[.en](reports/M5-prefill.en.md)** | M5: batched prefill, both the exact fp16 path and the first int8 attempt. |
-| [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b: prefill optimisation — flash attention, GEMM ordering, unrolling, and the first int8 quality evaluation. |
+| [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) · **[.en](reports/M5b-prefill-optimization.en.md)** | M5b: prefill optimisation — flash attention, GEMM ordering, unrolling, and the first int8 quality evaluation. |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) · **[.en](reports/M12-weight-layout.en.md)** | M12: 16-byte-wide weight reads. Gate not met, not implemented. |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11: int8 KV cache. Includes the later correction: the original quality claim did not reproduce, the real number is 99.51% top-1, and asymmetric quantisation measured worse. |
@@ -102,7 +102,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 |---|---|
 | [`reports/M3-decode-optimization.md`](reports/M3-decode-optimization.md) · **[.en](reports/M3-decode-optimization.en.md)** | M3:解码优化 —— 单 token 路径从 ALU 受限转为带宽受限。 |
 | [`reports/M5-prefill.md`](reports/M5-prefill.md) · **[.en](reports/M5-prefill.en.md)** | M5:批量预填充,精确 fp16 路径与第一次 int8 尝试。 |
-| [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b:预填充优化 —— flash attention、GEMM 顺序、展开,以及第一次 int8 质量评估。 |
+| [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) · **[.en](reports/M5b-prefill-optimization.en.md)** | M5b:预填充优化 —— flash attention、GEMM 顺序、展开,以及第一次 int8 质量评估。 |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) · **[.en](reports/M12-weight-layout.en.md)** | M12:16 字节宽权重读取。闸门未达到,不实现。 |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11:int8 KV 缓存。含后期更正:最初的画质结论无法复现,真实值是 top-1 99.51%,而非对称量化实测更差。 |
