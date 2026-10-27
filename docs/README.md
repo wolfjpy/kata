@@ -32,7 +32,7 @@ want the details.
 |---|---|
 | [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) | M0: baseline measurement, the reference tooling, and the project skeleton. |
 | [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) | M1/M2: a numerically correct full forward — all 64 layers — checked against the reference logits. |
-| [`CHECKPOINT-001.md`](CHECKPOINT-001.md) | Checkpoint 1: the reference sources are read end to end, the architecture is pinned down, the first kernels are written. The longest document here (~25k characters) and the most useful if you want the model's internals. |
+| [`CHECKPOINT-001.md`](CHECKPOINT-001.md) · **[.en](CHECKPOINT-001.en.md)** | Checkpoint 1: the reference sources are read end to end, the architecture is pinned down, the first kernels are written. The longest document here (~25k characters) and the most useful if you want the model's internals. |
 
 **Phase 2 — make it fast**
 | Document | One line |
@@ -67,7 +67,7 @@ want the details.
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9: the persistent prefix cache (18.6 s → 0.03 s on a repeated 3.6K-token prompt). |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01: a read-through assessment of the repository, the open issues and the next steps. |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | Checkpoint 2: state of play after the decode and prefill work. |
-| [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | Checkpoint 3: speculative decoding, the prefix cache and the CLI are in place. |
+| [`CHECKPOINT-003.md`](CHECKPOINT-003.md) · **[.en](CHECKPOINT-003.en.md)** | Checkpoint 3: speculative decoding, the prefix cache and the CLI are in place. |
 | [`CHECKPOINT-004.md`](CHECKPOINT-004.md) · **[.en](CHECKPOINT-004.en.md)** | Checkpoint 4: the draft-model line of work, and where it stands. |
 | [`../VERSIONS`](../VERSIONS) | The exact toolchain, model hash and baseline commit every number in this repository was measured with. |
 
@@ -95,7 +95,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 |---|---|
 | [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) | M0:基线测量、参考工具链与项目骨架。 |
 | [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) | M1/M2:数值正确的完整前向(全部 64 层),与参考 logits 对齐。 |
-| [`CHECKPOINT-001.md`](CHECKPOINT-001.md) | 检查点 1:通读参考源码、钉死架构、写出第一批内核。全仓库最长的一篇(约 2.5 万字),想了解模型内部结构看它。 |
+| [`CHECKPOINT-001.md`](CHECKPOINT-001.md) · **[.en](CHECKPOINT-001.en.md)** | 检查点 1:通读参考源码、钉死架构、写出第一批内核。全仓库最长的一篇(约 2.5 万字),想了解模型内部结构看它。 |
 
 **第二阶段 —— 做快**
 | 文档 | 一句话 |
@@ -130,6 +130,6 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9:持久化前缀缓存(重复的 3.6K 提示从 18.6 s 降到 0.03 s)。 |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01:仓库通读评估、遗留问题与下一步方案。 |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | 检查点 2:解码与预填充工作之后的进展。 |
-| [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | 检查点 3:投机解码、前缀缓存与 CLI 就位。 |
+| [`CHECKPOINT-003.md`](CHECKPOINT-003.md) · **[.en](CHECKPOINT-003.en.md)** | 检查点 3:投机解码、前缀缓存与 CLI 就位。 |
 | [`CHECKPOINT-004.md`](CHECKPOINT-004.md) · **[.en](CHECKPOINT-004.en.md)** | 检查点 4:草稿模型这条线的现状。 |
 | [`../VERSIONS`](../VERSIONS) | 本仓库每个数字的测量环境:工具链版本、模型哈希、基线 commit。 |
