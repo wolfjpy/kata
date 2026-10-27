@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M28b:草稿模块(加载 + 算子 + 几何),以及 M28c 的精确待办
 
 日期:2026-10-25 · M28 的第二步。用户要求:先插 M27a 抬上限(已完成,`reports/M27a-small-grid-fixes.md`),然后直接上 **Q4_K_M**(已完成解码与前向算子,见 §2)。

@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M9:持久化前缀缓存
 
 日期:2026-10-25 · 对应 CHECKPOINT-003 路线图 M9。灵感来自 ninfer(检查点 = KV + 完整续写状态)和 Strata(消息边界检查点)。

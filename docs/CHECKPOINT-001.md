@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+
 # Kata-M6 推理引擎 — Checkpoint 001
 
 - 写于:2026-10-23(本机时间 13:55 EDT 之后)

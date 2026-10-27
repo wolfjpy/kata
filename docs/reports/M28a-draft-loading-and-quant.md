@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 解码
 
 日期:2026-10-25 · M28 的第一步(加载 + 量化解码 + 草稿矩阵乘),为后续 5 层前向和选择器铺路。权重用现成文件:`incoai/Qwen3.8-27B-DFlash2-GGUF` 的 `Q4_K_M`(本机 `../../models/drafters/dflash2-q4km.gguf`)。

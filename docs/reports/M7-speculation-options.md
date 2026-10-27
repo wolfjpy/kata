@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M7:投机解码的其它方案(DFlash2、Bonsai 2B drafter、更深的 MTP)和宽验证的代价
 
 日期:2026-10-24 · 全部数据在同一台 Mac mini M6 上实测。

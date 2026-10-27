@@ -1,5 +1,7 @@
 # Kata
 
+**English** · [简体中文](README.zh-CN.md)
+
 ![Kata — Metal 4 inference engine for Bonsai-2-27B](docs/assets/social-preview.png)
 
 A from-scratch **Metal inference engine** for [Bonsai-2-27B](https://huggingface.co/prism-ml) — a 27B hybrid-attention
@@ -204,9 +206,13 @@ This engine has a paper trail of negative results, because they are the expensiv
 
 ## Documentation
 
+- **[`docs/README.md`](docs/README.md)** — bilingual documentation index: an English one-liner for every document, plus the Chinese original. Start here.
+- **[`README.zh-CN.md`](README.zh-CN.md)** — this README in Chinese.
+
 `docs/MODEL_SPEC.md` is the ground truth for the architecture (verified against the reference implementation and
 per-layer logit dumps). `docs/CHECKPOINT-00{1..4}.md` are milestone summaries; `docs/reports/M*.md` are the individual
-investigations, each with the measurement that justified the next step — including the ones that failed.
+investigations, each with the measurement that justified the next step — including the ones that failed. The engineering
+log is written in Chinese, in the order it happened; every document carries an English summary link at the top.
 
 ## Requirements
 

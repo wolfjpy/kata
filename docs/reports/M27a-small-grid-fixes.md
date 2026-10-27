@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M27a:验证窗口的小网格修复(每轮 −20%,上限抬到 +38%)
 
 日期:2026-10-25 · 对应 `CHECKPOINT-004` §5 的 M27a。目标是把"每轮固定开销"从 41 ms 压下来,让 DFlash2 的收益上限提高。

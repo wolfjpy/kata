@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M5b:预填充优化(flash attention、GEMM 顺序、展开、int8 质量评估)
 
 日期:2026-10-24 · 提交 `00264f7`(注意力)、`96e048d`(展开)、`a3581ee`(int8)、`53b04a8`(GEMM 顺序)

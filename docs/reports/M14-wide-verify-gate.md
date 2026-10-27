@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M14:宽验证微基准闸门——未通过,DFlash2(M15/M16)结案
 
 > **结论已被推翻(2026-10-25)。** 本文的测量数据仍然有效,但"结案"的判断错了:它拿 T=2 当基准而不是带宽下限,并且原型内核对 K=128/M=8/N=16/串行这几项都是有缺陷的。重新研究见 **`R2-dflash2-revisit.md`**:DFlash2 已重开(M25–M29)。

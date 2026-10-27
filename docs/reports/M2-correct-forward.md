@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # 里程碑 M1/M2:正确的完整前向(64 层 + MTP 之外的全部路径)
 
 日期:2026-10-24

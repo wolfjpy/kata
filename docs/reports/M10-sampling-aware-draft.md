@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M10:采样感知草稿——离线估计,闸门未达到,实现推迟
 
 日期:2026-10-25 · 对应 CHECKPOINT-003 路线图 M10。

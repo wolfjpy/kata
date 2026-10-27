@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+
 # 模型规格(从 Prism llama.cpp 与 HF 的实现中核实,可直接据此写内核)
 
 来源:`docs/reference/prism_qwen35_graph.cpp`、`prism_metal_gated_delta_net.metal`、`prism_ptq1_0_quant_dequant.c`,以及参考仓库 `refs/llama.cpp-prism`(`src/llama-graph.cpp`、`src/llama-model.cpp`、`ggml-cpu/ops.cpp`)。

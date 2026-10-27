@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M25:宽验证内核(为 DFlash2 铺路)
 
 日期:2026-10-25 · 对应 `R2-dflash2-revisit.md` 的 M25。前置:R2 推翻了 M14 的"结案"判断,决定重开。

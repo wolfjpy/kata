@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # R2:重新研究 DFlash2 —— 上一轮的结论错了,现在重开
 
 日期:2026-10-25 · 取代 `reports/M14-wide-verify-gate.md` 的结论(该文档的测量数据仍然有效),也改写 `REVIEW-01` §4 "不建议做"里关于 DFlash2 的那一行。

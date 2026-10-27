@@ -1,5 +1,7 @@
 # Reference sources
 
+**English** · [简体中文](README.zh-CN.md)
+
 These files are **not** built. They are copies of the upstream implementations that this engine was written against,
 kept here so that the numerical comparisons in `docs/` can be checked without fetching anything.
 

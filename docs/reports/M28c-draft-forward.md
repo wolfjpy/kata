@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M28c:草稿前向装配完成、端到端跑通;接受率仍为 0(定位到 3 个 bug,已修 2 个)
 
 日期:2026-10-25 · M28 的第三步。**这是一个中间状态的诚实记录**:链路全部打通、NaN 已解决,但草稿的提案仍与主干不一致(0/7 接受)。下一轮从这个状态继续。

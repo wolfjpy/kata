@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M17:小项——逐个测量,没有一项达到 1% 的保留线
 
 日期:2026-10-25 · 对应 CHECKPOINT-003 路线图 M17(规则:各自的收益 ≥ 1% 才保留)。结论:**都不实现**,原因和数据如下。

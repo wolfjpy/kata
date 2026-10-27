@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+
 # CHECKPOINT-003:向 Strata / ninfer 学到的东西、实测数据、已确认的决定和路线图
 
 日期:2026-10-25 · 自包含的恢复文档:**重启后只读本文件(以及它指向的文件)就能继续工作**。

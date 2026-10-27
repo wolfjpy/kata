@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M12:权重布局(16 字节宽读取)——闸门未达到,不实现
 
 日期:2026-10-25 · 对应 CHECKPOINT-003 路线图 M12(原计划:`kata-pack` 生成分平面文件,预期解码 +8–10%)。

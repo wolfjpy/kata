@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M26:验证侧完整化(任意宽度验证 + 状态快照 + 提交)
 
 日期:2026-10-25 · 对应 `R2-dflash2-revisit.md` 的 M26。前置 M25(宽验证内核,r=2.47)。

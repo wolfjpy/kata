@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # REVIEW-01:仓库通读评估、遗留问题与下一步方案
 
 日期:2026-10-25 · 只讨论,不改代码。配套阅读:`CHECKPOINT-003.md`(设计/决策/里程碑结果)、`reports/M0–M17`、`MODEL_SPEC.md`。

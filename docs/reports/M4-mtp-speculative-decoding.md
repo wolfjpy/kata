@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M4:MTP 投机解码(深度 1,验证宽度 2)
 
 日期:2026-10-24 · 提交 `c435af5`(MTP 头)、`f7f3796`(投机解码)

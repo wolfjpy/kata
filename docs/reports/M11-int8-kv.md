@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+
 # M11:int8 KV 缓存(`--kv int8`,有损,默认关闭)
 
 日期:2026-10-25 · 对应 CHECKPOINT-003 路线图 M11。依据:ninfer 的 KV 默认格式("FP8 row-256 / INT8 group-64")。

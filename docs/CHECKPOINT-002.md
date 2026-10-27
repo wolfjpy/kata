@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+
 # CHECKPOINT-002:引擎已实现(M0–M6 + MTP + 预填充优化)
 
 日期:2026-10-24 · 自包含的恢复文档。设计阶段的完整记录见 `CHECKPOINT-001.md`;每个里程碑的细节见 `reports/`。

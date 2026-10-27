@@ -1,3 +1,6 @@
+> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
+> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+
 # CHECKPOINT-004:DFlash2 重开后的进展(M25–M26)与后续
 
 日期:2026-10-25 · 自包含的恢复文档:**重启后只读本文件(以及它指向的两份文档)就能继续**。
