@@ -58,7 +58,7 @@ want the details.
 | [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) · **[.en](reports/M28a-draft-loading-and-quant.en.md)** | M28a: loading the DFlash2 drafter and decoding its Q4_K / Q6_K tensors. |
 | [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) · **[.en](reports/M28b-draft-module.en.md)** | M28b: the draft module — loading, ops, geometry — and the exact to-do list for M28c. |
 | [`reports/M28c-draft-forward.md`](reports/M28c-draft-forward.md) · **[.en](reports/M28c-draft-forward.en.md)** | M28c: the draft forward assembled and running end to end; acceptance still 0 (three bugs located, two fixed). Also records the MTP-chain bookkeeping audit. |
-| [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) | R2: DFlash2 revisited — the earlier conclusion was wrong, reopened. |
+| [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) · **[.en](reports/R2-dflash2-revisit.en.md)** | R2: DFlash2 revisited — the earlier conclusion was wrong, reopened. |
 
 **Infrastructure**
 | Document | One line |
@@ -121,7 +121,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) · **[.en](reports/M28a-draft-loading-and-quant.en.md)** | M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 张量解码。 |
 | [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) · **[.en](reports/M28b-draft-module.en.md)** | M28b:草稿模块(加载 + 算子 + 几何)与 M28c 的精确待办。 |
 | [`reports/M28c-draft-forward.md`](reports/M28c-draft-forward.md) · **[.en](reports/M28c-draft-forward.en.md)** | M28c:草稿前向装配完成、端到端跑通;接受率仍为 0(定位 3 个 bug、修好 2 个)。同时记录了 MTP 链式的记账审计。 |
-| [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) | R2:重新研究 DFlash2 —— 上一轮结论错了,重开。 |
+| [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) · **[.en](reports/R2-dflash2-revisit.en.md)** | R2:重新研究 DFlash2 —— 上一轮结论错了,重开。 |
 
 **基础设施**
 | 文档 | 一句话 |
