@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Make single-token decode fast. The M2 reference kernels decoded the ternaries element by element and cost ~500 ms/token, i.e. ~2 tok/s.
+
+**Result.**
+
+| stage | ms/token | tok/s | note |
+|---|---|---|---|
+| M2 reference kernels | ~500 | ~2 | per-lane element-wise decode |
+| + fast GEMV (`k_gemv_v1`) | 52.4 | 19.1 | operating directly on the GGUF layout |
+| + key-major GDN state, fused alpha/beta, fused residual-add + norm, split attention | **49.6** | **20.1** | numerics unchanged: 5/5 top-1, max logit diff 0.0005 |
+| baseline (Prism llama.cpp `tg128`) | 63.9 | 15.64 | |
+
+That is **+29% over the baseline** at the time.
+
+**The idea that mattered.** Each 128-weight block is decoded cooperatively by 8 lanes with a fixed byte-to-element mapping (`lane i` owns `qs[2i]`, `qs[2i+1]`, `qs[16+i]` and one trit of `qh[i&1]`), and the base-3 digits are recovered in pure float: with `u = b/256`, the n-th trit is `floor(3^(n+1) u) - 3 floor(3^n u)`. No integer division, no lookup table.
+
+---
 
 # 里程碑 M3:decode 优化
 

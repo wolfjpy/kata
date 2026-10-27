@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Complete the verification side: verification at arbitrary width, state snapshots, and commit.
+
+**What was built.**
+- `Engine::verifyWide(toks, T, pos, argmaxOut)`: T <= 8 tokens go through the trunk in one pass. Every PQ1_0 matrix goes through `k_wide`, including the shared `lm_head` (278 MB read once, producing 8 rows of logits).
+- `Engine::commitWide(accept)`: pick the snapshot, copy it back into the live state, rebuild the conv state from the window's first `accept` rows with the new `k_gdn_conv_snap` kernel (so no extra snapshot is needed), and top up the MTP cache for `pos+1 .. pos+accept`.
+- Test entry `--vwidth T`: verify T rows per round (dummy drafts here) and accept only row 0, so the output must match plain greedy decoding token for token.
+
+**Correctness.**
+
+| check | result |
+|---|---|
+| `--vwidth 8` (accept 1) against plain greedy | **token-identical** (550, 220, 16, 13, 561) |
+| `--vwidth` against the `verify2` path | identical sequence |
+| 9 snapshots + conv rebuild + MTP top-up across rounds | identical (the sequence above spans 5 rounds) |
+
+---
 
 # M26:验证侧完整化(任意宽度验证 + 状态快照 + 提交)
 

@@ -1,5 +1,19 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Revisit DFlash2. This document replaces the verdict of `M14-wide-verify-gate` (whose *measurements* remain valid) and rewrites the "do not do it" line about DFlash2 in `REVIEW-01` §4.
+
+**Three methodological errors, admitted up front.**
+
+1. **I used T=2 as the reference instead of the bandwidth floor.** A T=8 verification must read the 5.657 GB of weights once, so at 142 GB/s **39.8 ms is an irreducible lower bound**. The compute demand of T=8 is 8 x 48.7 GFLOP = 390 GFLOP, which at this machine's 14.7 TFLOPS is 26.5 ms — *still below the memory floor*. Comparing against T=2 (170 us) rather than against that floor made the gate far stricter than the physics requires.
+2. **I framed it as a pass/fail gate rather than a "how cheap can it be" question.** The right question is what the cost floor of one round is and how fast it must be to cover the drafting cost; framed that way, the bar is much lower (see §4 of the report).
+3. **The kernel I drew the conclusion from had four fixable flaws** (§3). Two of them — one `matmul2d` call per K=128 chunk, and M=8 — account for a 3x gap against the production prefill GEMM, which runs the whole K=5120 in one call at 14.7-16.6 TFLOPS.
+
+**Verdict.** DFlash2 is reopened; M25 (wide verification kernel) and M26 (verification side) follow.
+
+---
 
 # R2:重新研究 DFlash2 —— 上一轮的结论错了,现在重开
 

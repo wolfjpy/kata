@@ -1,5 +1,26 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** An int8 KV cache (`--kv int8`), after ninfer's default KV formats (FP8 row-256, INT8 group-64).
+
+**Result.**
+
+| item | fp16 KV (default) | int8 KV (`--kv int8`) |
+|---|---|---|
+| KV memory | 64 KB/token | **33 KB/token** (K and V, 16 layers x 1024 bytes, plus one fp16 scale per head-row) |
+| KV at 32K / 64K context | 2.1 / 4.2 GB | 1.1 / 2.2 GB |
+| decode, 7.3K context (plain / MTP) | 17.5-18.0 / 21.4-21.5 tok/s | 18.1 / 21.3-21.5 tok/s (no real gain) |
+| **decode, 29K context (plain)** | 13.7 tok/s | **15.6 tok/s (+14%)** |
+| **prefill, 29K prompt** | 162 tok/s | **178 tok/s (+10%)** |
+| quality: 3072 positions of a 24.5K corpus | — | **mean KL 1.28e-4, top-1 99.71%** (3063/3072), max KL 0.18 |
+| needle in a haystack (11.4K tokens, depth 10/50/90%) | 3/3 | 3/3 |
+| `verify2` against exact decode | KL 2.5e-7 | KL 9.2e-7, top-1 66/66 |
+
+**Correction (added later, see the end of this report).** The 99.71% figure does not reproduce: the in-process comparison is invalid because the KV mode decides the buffer allocation at load time. Measured cross-process it is **99.51% top-1**, and the mean KL is dominated by a handful of degenerate positions whose reference logits are around 1e6. Asymmetric (mean + scale) quantisation was implemented to fix it and measured *worse* (99.37%) because a head's values are already near-symmetric. Hence: opt-in, never a default.
+
+---
 
 # M11:int8 KV 缓存(`--kv int8`,有损,默认关闭)
 

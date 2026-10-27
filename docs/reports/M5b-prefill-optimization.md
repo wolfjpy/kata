@@ -1,5 +1,25 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Prefill optimisation: flash attention, GEMM ordering, unrolling, and a proper int8 quality evaluation.
+
+**Result.**
+
+| scenario | before | after | baseline (Prism llama.cpp) |
+|---|---|---|---|
+| exact fp16, 512 tokens | — | **245 tok/s** | 208 tok/s (`pp512`) |
+| exact fp16, 1024-token chunk | 177 tok/s | **257 tok/s (+45%)** | |
+| exact fp16, 7.3K prompt | 164 tok/s | **213 tok/s (+30%)** | |
+| int8 (`--fast`, opt-in), 1024 chunk | 278 tok/s | 270-283 tok/s (no longer a clear win) | |
+| int8, 7.3K prompt | 176 tok/s (scalar attention) | 232 tok/s | |
+
+A fanless machine throttles under sustained load, and the same configuration can differ by 10-15% between runs; the table takes the throttled steady state (a cold machine reaches 330 tok/s on the int8 1024-token chunk).
+
+**Where the exact path landed.** The GEMM now takes 3.0 s per 1024 tokens = **16.6 TFLOPS**, against a 17.3 TFLOPS fp16 matrix-unit peak — effectively done.
+
+---
 
 # M5b:预填充优化(flash attention、GEMM 顺序、展开、int8 质量评估)
 

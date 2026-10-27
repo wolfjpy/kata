@@ -1,5 +1,17 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Measure a batch of small optimisation ideas one at a time; each had to clear a 1% keep line.
+
+**Result.** Host-side QoS class on the sampling thread: no effect (22.5/22.6/21.6/22.3 vs 22.5/21.9/21.9/22.5 tok/s over four interleaved rounds). NEON top-K sampling: 0.2-0.8 ms -> 0.1 ms per cycle with bit-identical output, but end to end 6.89-7.01 s vs 6.90-6.97 s, i.e. inside the noise. Draft and verify in one command buffer: estimated 1.1 ms/cycle (1.7%), needs a kernel-API rewrite. lm_head vocabulary subset: 0.9 ms/cycle (1.4%), needs a token-frequency ranking. Suffix drafter: only helps repeated text (+3-9%) and costs a T>=3 verification kernel.
+
+**Verdict.** None implemented; each was reverted or deferred with the measurement above.
+
+**Worth remembering.** Host-side tricks disappear into the noise of a 62-66 ms round. The remaining time is ~51 ms of GPU verification GEMV (113 GB/s) and ~6 ms of drafting (MTP layer + 0.73 GB of lm_head reads).
+
+---
 
 # M17:小项——逐个测量,没有一项达到 1% 的保留线
 

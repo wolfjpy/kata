@@ -1,5 +1,19 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Would a 16-byte-wide weight layout (a split-plane file written by a `kata-pack` tool) buy the expected +8-10% in the decode path?
+
+**Measured first, without changing the file** (`tools/weight_read_probe`, pure reads): the native 28-byte block layout with its 2/1/1/2-byte lane reads reaches 124-132 GB/s; the same byte count as 16-byte vector reads reaches 141-142 GB/s. So the ceiling for any layout change is about +8-13%.
+
+**Width sweep** (contiguous per lane, normalised to bytes actually read): native 124-132 GB/s, 4 B 127, 8 B 135, 12 B (three adjacent 32-bit) 134-138, 16 B 138-139, whole-row 16-byte vectors 140-142.
+
+**Useful finding.** No file change is needed: every row is 16-byte aligned (row lengths 1120/1344/3808 bytes) and a 4-block group (112 B = 7 vectors) is aligned inside the row, so a simdgroup can cooperatively read 4 rows x 112 B into threadgroup memory with 16-byte accesses.
+
+**Verdict.** Gate not met at the time; not implemented. The 16-byte idea was revisited later as part of the wide verification kernel (M25).
+
+---
 
 # M12:权重布局(16 字节宽读取)——闸门未达到,不实现
 

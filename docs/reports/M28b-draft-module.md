@@ -1,5 +1,18 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Step two of the DFlash2 port: the draft module (loading, ops, geometry), plus the exact to-do list that M28c then worked through.
+
+**Authoritative graph**, taken from `refs/llama.cpp-prism/src/models/dflash.cpp` rather than inferred from prose (the drafter is a plain 5-layer model; there is no dedicated Metal kernel for it):
+
+- **Context encoder:** `c_t = plain_rmsnorm(fc(concat(5 target residuals)), enc.output_norm)`, where `fc` is a Q4_K 25600 -> 5120 matrix and the norm is applied **after** `fc`.
+- **Per decoder layer** (`il = 0..4`): `n = rmsnorm(inpL, attn_norm)`; a dynamic convolution (`dyn = attn_conv_proj @ n`, then `conv(n, dyn, attn_conv_base)`); `Q, K, V = wq/wk/wv @ n` — the same `K`/`V` weights are also used for the context injection; per-head RMSNorm on `Q` and `K`; RoPE on the first 64 dimensions only (`dimension_sections [64,0,0,0]`), and so on.
+
+**Deliverable.** The module plus a written, itemised to-do list for M28c — which is what made the three bugs found there findable.
+
+---
 
 # M28b:草稿模块(加载 + 算子 + 几何),以及 M28c 的精确待办
 

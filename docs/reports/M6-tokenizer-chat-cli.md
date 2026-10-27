@@ -1,5 +1,17 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Tokenizer, chat template, sampling and the command line.
+
+**Result.** Byte-level BPE decoded straight from the GGUF (word table + merges, priority queue over a doubly linked list, 33 added tokens as literals); NFC normalisation and the Qwen pre-tokenizer regex through ICU via `NSRegularExpression` — the only Objective-C++ file in the project; the parts of the Qwen3.8 chat template the engine needs (system/user/assistant, `enable_thinking`, `reasoning_effort` xhigh/medium/low) plus sampling; and `kata run` / `kata chat` / `kata tokenize`. Short suffixes (<=24 tokens) use per-token decode instead of a full prefill, because a prefill pays a 0.4-0.6 s fixed cost for expanding the weights.
+
+**Verification.** Tokeniser output is id-identical to `llama-tokenize` on 24 inputs (14 hand-written: prose, code, CJK, emoji and ZWJ, numbers with full-width/superscript/circled forms, whitespace and CRLF, abbreviations, JSON, special tokens and `<think>`/`<tool_call>`; plus 10 corpus samples). End to end: correct factual answers, correct chain-of-thought with thinking on, and a two-turn conversation that recalls the first turn's information, which proves the KV and GDN state reuse is correct.
+
+**Known limits.** The first MPP GEMM pipeline compiles for ~2 s (hence the slow first prefill); the default path is the exact fp16 one.
+
+---
 
 # 里程碑 M6:分词器、chat template、采样与命令行
 

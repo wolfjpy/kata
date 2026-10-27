@@ -1,5 +1,23 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Gate the multi-day DFlash2 project behind a microbenchmark: a T=8 verification must cost at most 1.5x a T=2 verification per matrix (`ffn_gate` ~255 us).
+
+**Result** (per matrix, microseconds, same run):
+
+| shape | T=2 LUT (in use) | T=8 wide fp16 | T=8 wide int8 | wide int8 / T=2 |
+|---|---|---|---|---|
+| ffn_gate/up 5120->17408 | 170 | 416 | **367** | **2.16x** |
+| ffn_down 17408->5120 | 174 | 441 | **388** | **2.23x** |
+| gdn_qkv 5120->10240 | 101.5 | 256 | **233** | **2.30x** |
+
+Per-simdgroup private tiles (4-8 KB each instead of a shared 20 KB block) and simdgroup-level barriers fixed the earlier prototype, and the numbers are exact (max error ~1e-6 against an fp32 reference).
+
+**Verdict.** 2.16x is well above the 1.5x gate, so DFlash2 was closed. **This verdict was later overturned** — see `R2-dflash2-revisit.md`: the gate compared against T=2 instead of the bandwidth floor, and the prototype kernel was also weak on K=128, M=8, N=16 and serialisation. DFlash2 was reopened in M28.
+
+---
 
 # M14:宽验证微基准闸门——未通过,DFlash2(M15/M16)结案
 

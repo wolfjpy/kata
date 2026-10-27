@@ -1,5 +1,21 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** A persistent prefix cache: checkpoint = KV plus the complete continuation state. The idea comes from ninfer (checkpoints of KV + full state) and Strata (checkpoints at message boundaries).
+
+**Result.**
+
+| scenario | without cache | with cache |
+|---|---|---|
+| 2941-token prompt (2900-token system prompt + short question), then another question | prefill 15-16 s | restore 0.02-0.1 s + prefill only 21 tokens (1.15 s first chat turn, with a background warm-up hiding the cold start) |
+| the same 3639-token raw prompt twice | prefill 18.6 s | restore 0.03 s, 0 tokens prefilled |
+| extrapolation: 20K-token system prompt | ~80 s | checkpoint ~1.5 GB, restore ~0.1 s (warm page cache) to ~0.5 s (cold SSD read, not measured) + a few hundred tokens |
+
+**Correctness** (`tools/test_cache.sh`, all passing): the restored output is **byte-identical** to a full prefill, for greedy and for seeded sampling; the run that wrote the checkpoint matched the uncached run; a full-prompt hit uses the saved logits; int8 and fp16 never share a checkpoint; a truncated checkpoint is ignored and rewritten.
+
+---
 
 # M9:持久化前缀缓存
 

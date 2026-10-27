@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Speculative decoding with the model's own MTP head, at depth 1 with a 2-wide verification.
+
+**Result.**
+
+| | plain decode | MTP speculative |
+|---|---|---|
+| greedy (temp 0), 200 tokens | 20.0 tok/s | **25.0 tok/s (+25%)** |
+| sampled (temp 1, top-k 20, top-p 0.95, min-p 0.05) | 19.8 tok/s | **22.7 tok/s (+15%)** |
+| predictable text (multi-turn, factual Q&A) | — | 29-31 tok/s (82-90% acceptance) |
+| baseline (Prism llama.cpp `tg128`) | 15.6 tok/s | — |
+
+A cycle at 60% acceptance and 1.60 tokens per cycle costs 5.7 ms of drafting plus 58.2 ms of verification, about 64 ms.
+
+**Quality.** `verify2` against exact single-token decoding over 830 positions: **mean KL 4.3e-6, max KL 8.4e-4, top-1 830/830**. The greedy text is character-identical to plain decoding for the first 690 characters, after which a near-tie flips between "rolled tight" and "rolled so tightly" — both coherent, and the two paths had identical logits to within 5e-4 there.
+
+---
 
 # M4:MTP 投机解码(深度 1,验证宽度 2)
 

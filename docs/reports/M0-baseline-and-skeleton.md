@@ -1,5 +1,17 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Pin every version, verify the model, build the reference runtime, and lay down the skeleton the rest of the work would measure against.
+
+**What was pinned** (see `VERSIONS`): macOS 27.0.1, Xcode 27.1, Metal compiler 32023.921 (language version 4.1), metal-cpp `8cdde68`, Prism llama.cpp `b3ebc47`; the model `mannix/Bonsai-2-27B:mtp-ptq1_0`, 6,397,969,920 bytes, SHA-256 `174c9c65…` matching the Ollama blob. The reference runtime and the model both live outside the repository.
+
+**What was built.** `tools/ref_logits`: links Prism's libllama and dumps per-position logits, per-layer residual outputs and per-layer norm/attention/FFN outputs for a given token list, which is what every later numerical claim was checked against. The skeleton: plain `make`, `config/kata_m6.h` shared by C++ and MSL, vendored `third_party/metal-cpp`, offline Metal toolchain verified. `docs/MODEL_SPEC.md` was written from the Prism sources in this milestone.
+
+**Baseline on this machine** (`llama-bench -ngl 99 -r 3`): **pp512 208.08 ± 7.12 tok/s, tg128 15.64 ± 0.06 tok/s**.
+
+---
 
 # 里程碑 M0:基线、参考工具与项目骨架
 

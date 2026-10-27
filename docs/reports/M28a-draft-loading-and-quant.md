@@ -1,5 +1,26 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Step one of the DFlash2 port: load the drafter and decode its Q4_K / Q6_K tensors, in preparation for the 5-layer forward and the selector. Weights are the existing `incoai/Qwen3.8-27B-DFlash2-GGUF` `Q4_K_M` file.
+
+**How much work is the port, really?** In `refs/llama.cpp-prism` the DFlash2 draft model is `src/models/dflash.cpp` and there is **no DFlash-specific Metal kernel** — it is an ordinary 5-layer model running through the normal ggml ops. So the port is loading plus a handful of conventional ops, not a new architecture.
+
+**Geometry, read from the GGUF metadata:**
+
+```
+dflash.block_count = 5            dflash.block_size = 8            (W=8, K=7)
+dflash.embedding_length = 5120    dflash.feed_forward_length = 17408
+dflash.attention.head_count = 32  head_count_kv = 8  key_length = 128  causal = False
+dflash.attention.sliding_window = 2048, pattern = [T,T,T,T,T]
+dflash.conv_kernel_size = 2, conv_group_size = 16
+dflash.selector_rank = 256, selector_top_k = 16
+```
+
+**Scope.** Q4_K and Q6_K dequantisation kernels, the matvec path for the draft model, and the tensor-name mapping from GGUF — no speculative machinery yet.
+
+---
 
 # M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 解码
 

@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Does sampling the draft from the MTP distribution `q` instead of taking its argmax raise acceptance? With a deterministic draft the accept probability is `p(d)`; with a sampled draft it is `min(1, p/q)` in expectation, which is what DFlash2 does.
+
+**Offline estimate** (`kata mtp-accept`, 800 positions, both distributions passed through the real sampler: temperature, top-k, top-p, min-p):
+
+| text | deterministic draft | sampled from q | top-1 agreement |
+|---|---|---|---|
+| prose (no thinking) | 53.6% | 60.5% | 60.5% |
+| code | 85.2% | 86.5% | 87.0% |
+| reasoning (thinking) | 71.9% | 75.7% | 75.0% |
+| explanation | 58.2% | 67.5% | 62.0% |
+| **all** | **67.2%** | **72.5%** | 71.1% |
+| temperature 0.6 | 70.1% | 72.6% | 72.4% |
+
+**Verdict.** +5.3 points of acceptance overall is real but the gate was not met, so the implementation was deferred rather than paid for.
+
+---
 
 # M10:采样感知草稿——离线估计,闸门未达到,实现推迟
 

@@ -1,5 +1,21 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Could a stronger drafter (the 2B drafter, DFlash2, a deeper MTP chain) speed things up further than depth-1 MTP at 25 tok/s?
+
+**Acceptance measured** with Prism's `llama-speculative-simple` (its Metal path is slow, 5-9 tok/s, so ignore the speeds — the acceptance statistics are what matter). "Tokens per round" = decoded tokens / verification rounds:
+
+| drafter | prose (no thinking) | code | reasoning (thinking) |
+|---|---|---|---|
+| MTP depth 1 | 1.6-1.64 (measured in our engine) | — | 1.86 |
+| MTP depth 3 (chain) | 1.87 | 3.2 | 3.13 |
+| **DFlash2** (7 draft tokens, Q4_K_M) | 2.2 | **5.1** | **5.1** |
+
+**Conclusion.** The acceptance is there for DFlash2 on code and reasoning — 5.1 tokens per round — but only if a wide verification can be made cheap, which is exactly what the M14 gate (later overturned by `R2`) tried to decide. Deeper MTP chains buy acceptance that the wider verification then gives back.
+
+---
 
 # M7:投机解码的其它方案(DFlash2、Bonsai 2B drafter、更深的 MTP)和宽验证的代价
 

@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** int8 prefill for the FFN `gate` and `up` matrices only, and whether it clears the quality gate.
+
+**Result.**
+
+| | exact fp16 (default) | `--fast-ffn` (gate+up int8) | `--fast` (all int8) |
+|---|---|---|---|
+| prefill, 1024-token chunk | 255-263 tok/s | **274-280 tok/s (+7-8%)** | 281 tok/s (+9-10%) |
+| prefill, 7.3K prompt | 207 tok/s | **226.5 tok/s (+9.5%)** | 229 tok/s (+10.7%) |
+| quality (24.5K-token corpus) | — | **mean KL 7.5e-5, top-1 99.87%** (3068/3072), max KL 0.039 | mean KL 4.4e-4, top-1 99.54% |
+| gate (KL <= 1e-3, top-1 >= 99.7%) | — | **passes, with margin** | fails |
+
+**Why it works.** `gate`+`up` are ~47% of the per-layer FLOPs, so int8 there captures ~80% of the fully-int8 gain while making the error an order of magnitude smaller (6x lower mean KL, 9x lower max KL). The error is dominated by quantising the activations that feed the GDN recurrent state, which this switch leaves alone.
+
+**Implementation.** `Engine::setI8(spec)` takes `all`, `ffn`, or a comma list of matrix names; activation quantisation only runs where an int8 consumer exists; the numerics tag carries the matrix set so prefix-cache checkpoints from different modes never mix.
+
+---
 
 # M13:FFN gate+up 的 int8 预填充开关(`--fast-ffn`,有损,默认关闭)
 

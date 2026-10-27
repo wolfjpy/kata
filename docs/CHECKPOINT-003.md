@@ -1,5 +1,25 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](README.md).*
+
+## Summary (EN)
+
+**What this is.** The third checkpoint (2026-10-25): what was learned from the Strata and ninfer sources, the measurements
+that came out of it, the decisions that were confirmed, and the roadmap the following milestones worked through. Once
+again a self-contained recovery document — after a restart, this file plus what it points at is enough to continue.
+
+**Contents.**
+
+- §0 recovery guide: repository root, model path, build command, the three reference repositories with their commits
+  (Strata `4b9e05a`, ninfer `64d10fb`, llama.cpp-prism `b3ebc47`), and the working rules for the project (language of
+  replies and documents, what may be committed, which switches need a quality gate).
+- §1 the performance baseline at that date.
+- The reading notes on Strata and ninfer: what they do that is worth copying (layered kernel organisation, checkpoint at
+  message boundaries) and what does not transfer to this hardware.
+- The quality gate definition that every later lossy switch was held to (top-1 >= 99.7%, mean KL <= 1e-3).
+- §7 the roadmap (M8-M17) and §8 the confirmed decisions. Most of those roadmap items were then measured and reported one
+  by one; several were rejected — see the individual reports for the numbers.
+
+---
 
 # CHECKPOINT-003:向 Strata / ninfer 学到的东西、实测数据、已确认的决定和路线图
 

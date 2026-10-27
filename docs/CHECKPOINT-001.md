@@ -1,5 +1,28 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](README.md).*
+
+## Summary (EN)
+
+**What this is.** The design-stage checkpoint, written on 2026-10-23 **before any engine code existed** (the repository had
+no commits at that point). Its purpose is stated in the first lines: let a fresh session with no memory of the
+conversation continue seamlessly from this file plus the documents it points at.
+
+**What is in it.**
+
+- A one-line statement of the task: a Metal-only inference engine for Ternary Bonsai-2-27B (Prism ML's ternary
+  quantisation of Qwen3.8-27B, Ollama tag `mannix/Bonsai-2-27B:mtp-ptq1_0`, 6.4 GB GGUF), on a Mac mini M6.
+- Hardware and data probes: what Metal 4 / MPP exposes on this chip, what the matrix units actually reach, and what the
+  weight layout allows.
+- The full reading of the Prism sources: the `qwen35` graph, the gated-DeltaNet kernel, the PTQ1_0 dequantiser.
+- The whitepaper analysis, including its published baseline numbers (M5 Max 46.8 tok/s `tg128` / 765 `pp512`, M5 Pro 27.7 /
+  397, M4 Pro 18.0 / 125) which set the scale of what was worth attempting.
+- The design decisions taken before the first line of code.
+
+**Why it is worth reading.** It is the longest document here (~25k characters) and the only place where the model's
+internals are worked out from the reference implementation in one narrative. If you want to understand what Bonsai-2-27B
+actually computes, read this and `MODEL_SPEC.md`.
+
+---
 
 # Kata-M6 推理引擎 — Checkpoint 001
 

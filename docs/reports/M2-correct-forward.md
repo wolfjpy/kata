@@ -1,5 +1,15 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Implement the whole forward the most direct way (single token, no batching, no tricks) and prove every formula and format detail against Prism llama.cpp layer by layer, before any performance work.
+
+**Result.** `src/gguf.*`: a GGUF v3 reader that mmaps the file and wraps it as one `MTLBuffer(bytesNoCopy)`, binding tensors by file offset, and reads the Hadamard sign vectors from the metadata. `shaders/ops.metal`: embedding dequantisation, `k_rms_fwht` (four modes: RMSNorm, SwiGLU, head permutation, 1024-point FWHT with the signs), plain norm, add, argmax. `shaders/gemv.metal`: reference-quality PTQ1_0 and bf16 matvecs, one simdgroup per row. `shaders/gdn.metal`: the causal convolution and the recurrence step, one threadgroup per V head, each thread holding one row of the state. `shaders/attn.metal`: q/k RMSNorm + RoPE + KV write, streaming-softmax decode. Shaders compile with `-fno-fast-math` so the numbers stay comparable.
+
+**Acceptance.** Per-layer agreement with the reference logits — the point of the milestone was that the numbers are right, not that they are fast.
+
+---
 
 # 里程碑 M1/M2:正确的完整前向(64 层 + MTP 之外的全部路径)
 

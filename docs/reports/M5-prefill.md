@@ -1,5 +1,20 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Batched prefill, in two variants: an exact fp16 path and an int8 path.
+
+**Design.** Each chunk (up to 1024 tokens) is processed layer by layer. Every ternary matrix is first expanded on the GPU into a tile-major matrix layout and then multiplied with MPP `matmul2d`, expansion and GEMM in the same command buffer, so the weights are read exactly once.
+- **Path A (exact):** expand to fp16 (`w = scale * trit`; fp16 times ±1/0 is exact), `half x half -> float`, tile 32x64, one simdgroup, N-major.
+- **Path B (int8):** expand to int8 trits plus a per (row, 128-group) fp32 scale; activations quantised with one scale per token; `int8 x int8 -> int32` with an **exact** scale epilogue per K=128 group.
+- Everything else got a batched version too: embedding, fused residual-add + RMSNorm + signs + FWHT (one threadgroup per token), alpha/beta fused into one 128-column GEMM, conv, q/k L2 norm, gating, GDN recurrence, attention.
+
+After prefill, the GDN state, conv state and KV cache are fully compatible with per-token decode, which is what makes the chat path work.
+
+**Findings from the cooperative-tensor API** (`docs/probes/int8_epilogue_api_debug.cpp`): the `int` and `float` destination cooperative tensors share a layout and can be mixed element-wise; `get_multidimensional_index` returns `[column n, row m]`; a broadcast `cS.load(...)` gives wrong results (measured), so scales are indexed element-wise; tiles 64x128 and 32x64 spill registers and reach only 4-5 TOPS, while **64x64 with 4 simdgroups reaches 26 TOPS** including the exact epilogue (2.1x the sustained fp16 rate of 12.6).
+
+---
 
 # 里程碑 M5:批量 prefill(精确 fp16 路径 + int8 路径)
 

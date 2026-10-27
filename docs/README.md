@@ -6,6 +6,10 @@ The engine's code and the README are in English; the engineering log — the mil
 reports — is written in Chinese, in the order it happened. This page gives both audiences a map: an English one-liner
 for every document, and the Chinese original right below it.
 
+**Every document in `docs/` now opens with a `## Summary (EN)` block** — goal, the measured numbers, the verdict and the
+next step — so you can read the conclusion of any report without Chinese, and only dive into the Chinese body when you
+want the details.
+
 > 代码与 README 为英文;工程日志(阶段检查点 + 24 篇实验报告)按其发生顺序以中文写成。本页给两种读者一张地图:
 > 每篇文档都有一句英文摘要,下面紧跟中文原文标题。
 
@@ -68,9 +72,9 @@ for every document, and the Chinese original right below it.
 | [`../VERSIONS`](../VERSIONS) | The exact toolchain, model hash and baseline commit every number in this repository was measured with. |
 
 ### Reading the reports without Chinese
-Each report follows the same shape, which makes the tables readable on their own: a **goal**, the **measurement**
-(every table's headers are numbers or English identifiers), the **verdict** (接受 = accept, 否决 = reject,
-闸门未达到 = gate not met), and the **next step**. The one-line summaries above are the fastest path.
+Three layers, cheapest first: the one-liners in the tables above; the `## Summary (EN)` block at the top of each document
+(goal, numbers, verdict, next step); and finally the Chinese body, whose tables are numbers and English identifiers
+anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = reject, 闸门未达到 = gate not met.
 
 ---
 

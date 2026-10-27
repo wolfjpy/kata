@@ -1,5 +1,25 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](README.md).*
+
+## Summary (EN)
+
+**What this is.** The fourth checkpoint (2026-10-25), written after DFlash2 was reopened: the progress of M25-M26 and what
+follows. Self-contained, like the others.
+
+**The four decisions it records** (from `R2` §7): (1) accept `r <= 1.6` as the condition to continue with DFlash2; (2) go
+straight to the Q4_K_M drafter, no Q8 intermediate; (3) ignore the memory budget — 16 GB of unified memory and 256 GB of
+SSD exist, use them; (4) accept `r ~ 2` as the lower-bound line rather than treating it as a failure.
+
+**Working rules it fixes for the rest of the project:** documents and reports in Chinese, commit messages in English, one
+commit per milestone with its report attached, only ever commit self-generated files (never the PDFs, PNGs or notes the
+owner keeps in the repository root), lossy switches must clear the quality gate and stay off by default, and timing must
+be interleaved A/B because the machine throttles by ~10% after a minute of sustained load.
+
+**Contents.** The recovery guide, then a table of what this round completed (the wide verification kernel at r = 2.47, the
+verification side with snapshots and commit, and the small-grid fixes that took a round from 177 ms to 141 ms), and the
+follow-on plan.
+
+---
 
 # CHECKPOINT-004:DFlash2 重开后的进展(M25–M26)与后续
 

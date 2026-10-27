@@ -1,5 +1,27 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Cut the fixed per-round overhead (41 ms) so that DFlash2's ceiling rises.
+
+**Result** (ms per round):
+
+| configuration | T=2 | T=4 | T=8 |
+|---|---|---|---|
+| M26 (before) | 156 | 159 | 167 |
+| **M27a (now)** | **141** | **140** | **142** |
+
+The plain decode baseline in the same (throttled) period was 50.7 ms/token, and the same state measured 177 ms/round before the fixes, so this is **-20%**, better than the 147 ms target set in `CHECKPOINT-004`. At 7.2K context, T=8 costs 176 ms with split attention versus 173 ms with flash attention.
+
+**Impact on DFlash2** (K=7, 5.20 tokens per round measured, ~9 ms Q4_K_M draft):
+
+| configuration | per round | code/reasoning | prose |
+|---|---|---|---|
+| M26 | 176 ms | 29.5 tok/s (+18%) | 11.8 |
+| **M27a** | **151 ms** | **34.4 tok/s (+38%)** | 13.7 |
+
+---
 
 # M27a:验证窗口的小网格修复(每轮 −20%,上限抬到 +38%)
 

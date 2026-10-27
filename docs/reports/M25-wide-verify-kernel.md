@@ -1,5 +1,23 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**Goal.** Build the wide verification kernel that reopens DFlash2 (M14's verdict had been overturned by `R2`). Target: `r = T=16 / T=2 <= 1.6`.
+
+**Result.**
+
+| item | target | achieved |
+|---|---|---|
+| r on `ffn_gate` | <= 1.6 | **2.47** (420 us vs 170 us) |
+| numerics vs fp32 reference | <= 1e-5 | **2.98e-6** (two orders better than the 5.6e-4 of the half2 path) |
+| verdict | — | missed 1.6, landed on the lower-bound line of R2's table (r ~ 2) |
+
+**Projection at r = 2.47:** one DFlash2 round (K=7) is `51 x 2.47 + 16 ~ 142 ms` for verification plus 9 ms for the Q4_K_M draft = 151 ms for 5.20 tokens, i.e. **34 tok/s** on code/reasoning (+38% over today's 25), and 2.07 tokens per round on prose.
+
+**What was built.** `k_wide` in `shaders/wide.metal`: one simdgroup owns N output rows with no threadgroup-level barrier; each 128-weight group is decoded through a 16-byte ternary LUT into a **private** fp16 tile (column-major, row stride `KC+8` to break bank conflicts); followed by a shape sweep on the real tensors, comparing variants within a single cooled-down run.
+
+---
 
 # M25:宽验证内核(为 DFlash2 铺路)
 

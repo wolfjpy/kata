@@ -1,5 +1,27 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](README.md).*
+
+## Summary (EN)
+
+**What this is.** The second checkpoint (2026-10-24), written once the engine existed: milestones M0-M6 plus MTP
+speculative decoding and the first prefill optimisation. Like the others it is a self-contained recovery document.
+
+**State of the engine at this point.** Ternary Bonsai-2-27B (`qwen35` architecture: PTQ1_0 Hadamard-folded ternary
+weights plus an MTP layer) in C++17 + MSL, target machine Mac mini M6.
+
+| metric | this engine | baseline (Prism llama.cpp, same machine) |
+|---|---|---|
+| decode, plain | 19.8 tok/s | 15.6 tok/s (`tg128`) |
+| decode, MTP speculative (greedy / sampled) | **25.0 / 22.7 tok/s** | — |
+| decode, MTP, 7.3K context | 21.4-21.7 tok/s | — |
+| prefill, exact fp16, 512 tokens | **245 tok/s** | 208 tok/s (`pp512`) |
+| prefill, exact fp16, 1024-token chunk | **257 tok/s** | — |
+
+**What else it contains.** The file map (which source file owns which part of the pipeline), the commands to reproduce
+every number, the quality gate as it stood then, and — most usefully — the list of hypotheses that measurement had already
+overturned.
+
+---
 
 # CHECKPOINT-002:引擎已实现(M0–M6 + MTP + 预填充优化)
 

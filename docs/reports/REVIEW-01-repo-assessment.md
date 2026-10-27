@@ -1,5 +1,24 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**What this is.** A read-through assessment of the whole repository: where it stands, what is left open, and what to do
+next. Discussion only — no code was changed in this round.
+
+**How it was produced.** All 21 documents, the 11 source files in `src/`, the 14 MSL files in `shaders/` and the 8 programs
+in `tools/` were re-read, and every number that would be used to make a decision was cross-checked against the code and,
+where possible, re-measured on today's machine.
+
+**What changed the conclusions** (§3.4): three new measurements — combined switches fail the quality gate, a one-shot
+process necessarily pays 3.3 s of setup, and the decode path's arithmetic does not line up with the other paths. Those,
+plus the existing performance account, produce the plan in §5 and the milestone list in §6.
+
+**Contents.** The repository inventory (~3,750 lines of own code plus vendored metal-cpp, file by file with line counts and
+roles), the open issues graded by cost and payoff, and the resulting plan. This is the document to read if you want to know
+what is *not* finished rather than what is.
+
+---
 
 # REVIEW-01:仓库通读评估、遗留问题与下一步方案
 

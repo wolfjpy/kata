@@ -1,5 +1,29 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](../README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](../README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
+
+## Summary (EN)
+
+**What this is.** Step three of the DFlash2 port, and an honest record of an intermediate state: the draft forward is
+assembled and runs end to end, the NaNs are gone, but the draft proposals still disagree with the trunk — 0 of 7 accepted.
+The next round continues from exactly this state.
+
+**What runs now.**
+
+```
+build/kata dflash-eval --model ../../models/bonsai-2-27b-mtp-ptq1_0.gguf \
+  --draft ../../models/drafters/dflash2-q4km.gguf --ids "$(cat /tmp/ids72.txt)" --gen 24
+```
+
+with output of the form: `[draft] 5 layers, 1079 MB of weights, ring 4096 positions, 80 MB of K/V`, the 72-token prompt
+consumed through 8-row windows in 4.1 s, anchor 271 at position 72, then per-round draft proposals.
+
+**Contents.** The three bugs found in this round (two fixed), the remaining discrepancy, and — in §16 — an audit of the MTP
+chain bookkeeping (`commitWide` / `encMtpKv` / `nextTok`) that found and fixed three further real bugs: an fp16 buffer
+being read as float, the anchor token being emitted twice, and the wrong norm feeding the next step. The first-draft
+acceptance puzzle at depth 3 (0.47, against 1.00 at depth 1, for the *same* draft call) is documented as still open, with
+the measurements that rule out the h path and the verification kernel.
+
+---
 
 # M28c:草稿前向装配完成、端到端跑通;接受率仍为 0(定位到 3 个 bug,已修 2 个)
 

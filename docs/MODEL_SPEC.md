@@ -1,5 +1,29 @@
-> 本文以中文写成。英文摘要见双语文档索引 [docs/README.md](README.md)。
-> *This document is in Chinese; see the bilingual index at [docs/README.md](README.md) for an English summary.*
+> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](README.md)。
+> *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](README.md).*
+
+## Summary (EN)
+
+**What this is.** The architecture, verified against the reference implementation and written so that kernels can be
+written directly from it. Sources: `docs/reference/prism_qwen35_graph.cpp`, `prism_metal_gated_delta_net.metal`,
+`prism_ptq1_0_quant_dequant.c` and the `refs/llama.cpp-prism` tree. Every formula follows the Prism implementation and was
+checked numerically against per-layer dumps from `tools/ref_logits`; each section ends with its verification status.
+
+**The shapes that matter.** hidden 5120; 64 layers; 48 gated-DeltaNet layers and 16 full-attention layers (every layer
+where `il % 4 == 3`); GQA with 24 query heads and 4 KV heads, head dim 256; FFN inner width 17408 (= 17 x 1024); vocabulary
+248320; MTP head in `blk.64`, Q8_0.
+
+**The parts that are easy to get wrong.**
+
+- Every ternary matmul rotates its input with a Walsh-Hadamard transform first (the quantisation basis); `ssm_alpha` and
+  `ssm_beta` are bf16 and are *not* rotated.
+- GDN: `q` 2048 (16 heads), `k` 2048 (16 heads), `v` 10240 (48 heads) — the value head count is not the query head count.
+- Attention: the Q projection is 12288 = 24 heads of `[query 256 | gate 256]` interleaved; RoPE rotates only the first 64
+  dimensions of each head, in pairs `(i, i+32)`; the output is `attn * sigmoid(gate)` even though the HF config says
+  `output_gate_type=swish` — both HF and Prism implement sigmoid.
+
+**Reading time.** ~10 minutes, and it is the one document to read before touching `shaders/`.
+
+---
 
 # 模型规格(从 Prism llama.cpp 与 HF 的实现中核实,可直接据此写内核)
 
