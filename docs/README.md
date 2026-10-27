@@ -38,7 +38,7 @@ want the details.
 | Document | One line |
 |---|---|
 | [`reports/M3-decode-optimization.md`](reports/M3-decode-optimization.md) · **[.en](reports/M3-decode-optimization.en.md)** | M3: decode optimisation — the single-token path becomes bandwidth-bound instead of ALU-bound. |
-| [`reports/M5-prefill.md`](reports/M5-prefill.md) | M5: batched prefill, both the exact fp16 path and the first int8 attempt. |
+| [`reports/M5-prefill.md`](reports/M5-prefill.md) · **[.en](reports/M5-prefill.en.md)** | M5: batched prefill, both the exact fp16 path and the first int8 attempt. |
 | [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b: prefill optimisation — flash attention, GEMM ordering, unrolling, and the first int8 quality evaluation. |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) · **[.en](reports/M12-weight-layout.en.md)** | M12: 16-byte-wide weight reads. Gate not met, not implemented. |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
@@ -55,8 +55,8 @@ want the details.
 | [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10: sampling-aware drafts — estimated offline, gate not met, implementation deferred. |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) · **[.en](reports/M14-wide-verify-gate.en.md)** | M14: the wide-verification microbenchmark gate; it did not pass, so DFlash2 (M15/M16) was closed. |
 | [`reports/M25-wide-verify-kernel.md`](reports/M25-wide-verify-kernel.md) · **[.en](reports/M25-wide-verify-kernel.en.md)** | M25: the wide verification kernel that paved the way for DFlash2 — and the ablation showing the MMA is the floor. |
-| [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) | M28a: loading the DFlash2 drafter and decoding its Q4_K / Q6_K tensors. |
-| [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) | M28b: the draft module — loading, ops, geometry — and the exact to-do list for M28c. |
+| [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) · **[.en](reports/M28a-draft-loading-and-quant.en.md)** | M28a: loading the DFlash2 drafter and decoding its Q4_K / Q6_K tensors. |
+| [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) · **[.en](reports/M28b-draft-module.en.md)** | M28b: the draft module — loading, ops, geometry — and the exact to-do list for M28c. |
 | [`reports/M28c-draft-forward.md`](reports/M28c-draft-forward.md) · **[.en](reports/M28c-draft-forward.en.md)** | M28c: the draft forward assembled and running end to end; acceptance still 0 (three bugs located, two fixed). Also records the MTP-chain bookkeeping audit. |
 | [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) | R2: DFlash2 revisited — the earlier conclusion was wrong, reopened. |
 
@@ -101,7 +101,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | 文档 | 一句话 |
 |---|---|
 | [`reports/M3-decode-optimization.md`](reports/M3-decode-optimization.md) · **[.en](reports/M3-decode-optimization.en.md)** | M3:解码优化 —— 单 token 路径从 ALU 受限转为带宽受限。 |
-| [`reports/M5-prefill.md`](reports/M5-prefill.md) | M5:批量预填充,精确 fp16 路径与第一次 int8 尝试。 |
+| [`reports/M5-prefill.md`](reports/M5-prefill.md) · **[.en](reports/M5-prefill.en.md)** | M5:批量预填充,精确 fp16 路径与第一次 int8 尝试。 |
 | [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b:预填充优化 —— flash attention、GEMM 顺序、展开,以及第一次 int8 质量评估。 |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) · **[.en](reports/M12-weight-layout.en.md)** | M12:16 字节宽权重读取。闸门未达到,不实现。 |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
@@ -118,8 +118,8 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10:采样感知草稿 —— 离线估计,闸门未达到,实现推迟。 |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) · **[.en](reports/M14-wide-verify-gate.en.md)** | M14:宽验证微基准闸门未通过,DFlash2(M15/M16)结案。 |
 | [`reports/M25-wide-verify-kernel.md`](reports/M25-wide-verify-kernel.md) · **[.en](reports/M25-wide-verify-kernel.en.md)** | M25:为 DFlash2 铺路的宽验证内核 —— 以及证明 MMA 是硬底的消融。 |
-| [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) | M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 张量解码。 |
-| [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) | M28b:草稿模块(加载 + 算子 + 几何)与 M28c 的精确待办。 |
+| [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) · **[.en](reports/M28a-draft-loading-and-quant.en.md)** | M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 张量解码。 |
+| [`reports/M28b-draft-module.md`](reports/M28b-draft-module.md) · **[.en](reports/M28b-draft-module.en.md)** | M28b:草稿模块(加载 + 算子 + 几何)与 M28c 的精确待办。 |
 | [`reports/M28c-draft-forward.md`](reports/M28c-draft-forward.md) · **[.en](reports/M28c-draft-forward.en.md)** | M28c:草稿前向装配完成、端到端跑通;接受率仍为 0(定位 3 个 bug、修好 2 个)。同时记录了 MTP 链式的记账审计。 |
 | [`reports/R2-dflash2-revisit.md`](reports/R2-dflash2-revisit.md) | R2:重新研究 DFlash2 —— 上一轮结论错了,重开。 |
 
