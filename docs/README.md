@@ -66,7 +66,7 @@ want the details.
 | [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6: tokenizer, chat template, sampling and the command line. |
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9: the persistent prefix cache (18.6 s → 0.03 s on a repeated 3.6K-token prompt). |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01: a read-through assessment of the repository, the open issues and the next steps. |
-| [`CHECKPOINT-002.md`](CHECKPOINT-002.md) | Checkpoint 2: state of play after the decode and prefill work. |
+| [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | Checkpoint 2: state of play after the decode and prefill work. |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | Checkpoint 3: speculative decoding, the prefix cache and the CLI are in place. |
 | [`CHECKPOINT-004.md`](CHECKPOINT-004.md) | Checkpoint 4: the draft-model line of work, and where it stands. |
 | [`../VERSIONS`](../VERSIONS) | The exact toolchain, model hash and baseline commit every number in this repository was measured with. |
@@ -129,7 +129,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6:分词器、chat template、采样与命令行。 |
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9:持久化前缀缓存(重复的 3.6K 提示从 18.6 s 降到 0.03 s)。 |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01:仓库通读评估、遗留问题与下一步方案。 |
-| [`CHECKPOINT-002.md`](CHECKPOINT-002.md) | 检查点 2:解码与预填充工作之后的进展。 |
+| [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | 检查点 2:解码与预填充工作之后的进展。 |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | 检查点 3:投机解码、前缀缓存与 CLI 就位。 |
 | [`CHECKPOINT-004.md`](CHECKPOINT-004.md) | 检查点 4:草稿模型这条线的现状。 |
 | [`../VERSIONS`](../VERSIONS) | 本仓库每个数字的测量环境:工具链版本、模型哈希、基线 commit。 |
