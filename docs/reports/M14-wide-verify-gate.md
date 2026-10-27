@@ -1,4 +1,4 @@
-> 本文以中文写成;下方 `## Summary (EN)` 是英文摘要,双语文档索引见 [docs/README.md](../README.md)。
+> 本文以中文写成;**英文全译:[M14-wide-verify-gate.en.md](M14-wide-verify-gate.en.md)**,下方 `## Summary (EN)` 为摘要,双语文档索引见 [docs/README.md](../README.md)。
 > *This document is in Chinese. An English summary follows; the bilingual index is at [docs/README.md](../README.md).*
 
 ## Summary (EN)
