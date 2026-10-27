@@ -22,7 +22,7 @@ want the details.
 |---|---|---|
 | [`../README.md`](../README.md) | Project overview, quick start, performance vs llama.cpp, quality gates, references | English |
 | [`../README.zh-CN.md`](../README.zh-CN.md) | The same README in Chinese | 中文 |
-| [`MODEL_SPEC.md`](MODEL_SPEC.md) | **Ground truth for the architecture**: every layer, shape, formula and kernel, verified against the reference implementation and per-layer logit dumps | 中文 |
+| [`MODEL_SPEC.md`](MODEL_SPEC.md) · **[`.en.md`](MODEL_SPEC.en.md)** | **Ground truth for the architecture**: every layer, shape, formula and kernel, verified against the reference implementation and per-layer logit dumps | 中文 + **English (full)** |
 | [`reference/README.md`](reference/README.md) | Provenance and licence for the upstream source copies kept in `docs/reference/` | English |
 
 ### The engineering log (newest thinking last, in the order it happened)
@@ -85,7 +85,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 |---|---|---|
 | [`../README.md`](../README.md) | 项目总览、快速开始、与 llama.cpp 的性能对比、质量门限、参考来源 | English |
 | [`../README.zh-CN.md`](../README.zh-CN.md) | 同一份 README 的中文版 | 中文 |
-| [`MODEL_SPEC.md`](MODEL_SPEC.md) | **架构的事实基准**:每一层、每个形状、公式与内核,已对照参考实现与逐层 logit 导出验证 | 中文 |
+| [`MODEL_SPEC.md`](MODEL_SPEC.md) · **[`.en.md`](MODEL_SPEC.en.md)** | **架构的事实基准**:每一层、每个形状、公式与内核,已对照参考实现与逐层 logit 导出验证 | 中文 + **英文全译** |
 | [`reference/README.md`](reference/README.md) | `docs/reference/` 中上游源码副本的来源与许可 | English |
 
 ### 工程日志(按发生顺序,最新的思考在最后)

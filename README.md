@@ -210,7 +210,7 @@ This engine has a paper trail of negative results, because they are the expensiv
 - **[`README.zh-CN.md`](README.zh-CN.md)** — this README in Chinese.
 
 `docs/MODEL_SPEC.md` is the ground truth for the architecture (verified against the reference implementation and
-per-layer logit dumps). `docs/CHECKPOINT-00{1..4}.md` are milestone summaries; `docs/reports/M*.md` are the individual
+per-layer logit dumps), with a **full English translation** in [`docs/MODEL_SPEC.en.md`](docs/MODEL_SPEC.en.md). `docs/CHECKPOINT-00{1..4}.md` are milestone summaries; `docs/reports/M*.md` are the individual
 investigations, each with the measurement that justified the next step — including the ones that failed. The engineering log is
 written in Chinese, in the order it happened, and **every document opens with a `## Summary (EN)` block** (goal,
 numbers, verdict, next step) so the conclusions are readable without Chinese.
