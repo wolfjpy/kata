@@ -44,7 +44,7 @@ want the details.
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11: int8 KV cache. Includes the later correction: the original quality claim did not reproduce, the real number is 99.51% top-1, and asymmetric quantisation measured worse. |
 | [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17: a batch of small ideas, each measured; none cleared the 1% keep line. |
-| [`reports/M26-verification-side.md`](reports/M26-verification-side.md) | M26: arbitrary-width verification, state snapshots and commit. |
+| [`reports/M26-verification-side.md`](reports/M26-verification-side.md) · **[.en](reports/M26-verification-side.en.md)** | M26: arbitrary-width verification, state snapshots and commit. |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) · **[.en](reports/M27a-small-grid-fixes.en.md)** | M27a: small grid fixes in the verification window — 20% off per round, ceiling raised to +38%. |
 
 **Phase 3 — speculation, and what did not work**
@@ -107,7 +107,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11:int8 KV 缓存。含后期更正:最初的画质结论无法复现,真实值是 top-1 99.51%,而非对称量化实测更差。 |
 | [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17:一批小想法,逐个测量,没有一个达到 1% 的保留线。 |
-| [`reports/M26-verification-side.md`](reports/M26-verification-side.md) | M26:任意宽度验证、状态快照与提交。 |
+| [`reports/M26-verification-side.md`](reports/M26-verification-side.md) · **[.en](reports/M26-verification-side.en.md)** | M26:任意宽度验证、状态快照与提交。 |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) · **[.en](reports/M27a-small-grid-fixes.en.md)** | M27a:验证窗口的小网格修复 —— 每轮省 20%,上限抬到 +38%。 |
 
 **第三阶段 —— 投机,以及失败的部分**
