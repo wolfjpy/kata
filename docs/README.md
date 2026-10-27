@@ -68,7 +68,7 @@ want the details.
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01: a read-through assessment of the repository, the open issues and the next steps. |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | Checkpoint 2: state of play after the decode and prefill work. |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | Checkpoint 3: speculative decoding, the prefix cache and the CLI are in place. |
-| [`CHECKPOINT-004.md`](CHECKPOINT-004.md) | Checkpoint 4: the draft-model line of work, and where it stands. |
+| [`CHECKPOINT-004.md`](CHECKPOINT-004.md) · **[.en](CHECKPOINT-004.en.md)** | Checkpoint 4: the draft-model line of work, and where it stands. |
 | [`../VERSIONS`](../VERSIONS) | The exact toolchain, model hash and baseline commit every number in this repository was measured with. |
 
 ### Reading the reports without Chinese
@@ -131,5 +131,5 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01:仓库通读评估、遗留问题与下一步方案。 |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | 检查点 2:解码与预填充工作之后的进展。 |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | 检查点 3:投机解码、前缀缓存与 CLI 就位。 |
-| [`CHECKPOINT-004.md`](CHECKPOINT-004.md) | 检查点 4:草稿模型这条线的现状。 |
+| [`CHECKPOINT-004.md`](CHECKPOINT-004.md) · **[.en](CHECKPOINT-004.en.md)** | 检查点 4:草稿模型这条线的现状。 |
 | [`../VERSIONS`](../VERSIONS) | 本仓库每个数字的测量环境:工具链版本、模型哈希、基线 commit。 |
