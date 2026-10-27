@@ -132,3 +132,64 @@ exact but needs a second 16x256 accumulator for V (128 registers/lane), which do
 So the honest status of the int8 KV cache: **99.51% top-1, opt-in, not a default**; the coarse per-(position, head)
 scale is a property of what the `matmul2d` path can fold, and passing the 99.7% gate needs either fp8 storage or
 per-group scales with one MMA per group.
+
+## M31:长上下文逐位置 KL、外部对照,以及 K/V 拆分的实现
+
+由一位读者提出的两点质疑驱动:(1) top-1 会掩盖只在长上下文深处才出现的漂移,应该记录**逐位置 KL**;(2) 如果 K 和 V 都做 int8
+有害,K 通常比 V 敏感,应该做 **K fp16 / V int8** 的廉价 A/B。两条都成立,下面是数据。
+
+### 1. 工具:逐位置 KL 与深度分桶
+
+`kl-eval` 增加 `KATA_KL_TRACE=1`:逐位置打印 `pos KL 参考logitmax 候选logitmax top1`,并给出**按深度分桶**的汇总
+(0-1K / 1-4K / 4K-8K / 8K-16K / 16K-32K / ≥32K)。另加 `KATA_KV_DUMP=文件`:导出第 0 层 K/V 平面的前 64 KB,用于两种模式逐字节对比。
+
+**控制实验**(同一份参考对自身,fp16 KV,16384 token):`mean KL 0.000e+00 | max 0.000e+00 | 4096/4096` —— harness 确定性,
+所以下面的深度趋势是信号而不是噪声。
+
+### 2. 深度曲线:int8 KV 对 fp16 KV,16384 token,4096 个位置
+
+排除退化位置(参考 top logit ≥ 1e3,约占 20%)后的分位数:
+
+| 深度 | n | p50 | p90 | p99 | max | KL>1e-3 | top-1 错 |
+|---|---|---|---|---|---|---|---|
+| 0-4K | 1021 | 2.45e-05 | 2.32e-04 | 5.88e-03 | 1.01e-01 | 2.6% | 0.8% |
+| 4-8K | 1020 | 2.16e-05 | 2.09e-04 | 9.44e-03 | 4.36e-02 | 3.3% | 0.6% |
+| 8-12K | 1020 | 1.94e-05 | 2.11e-04 | 1.07e-02 | 4.16e+00 | 3.1% | 1.2% |
+| 12-16K | 1020 | 7.36e-06 | 3.13e-04 | 2.21e-02 | 1.01e+00 | 3.9% | 0.8% |
+
+**中位数随深度不涨**(对 log10(KL) 回归位置:斜率 **−0.022 dex / 1K token**,基本平坦),但**尾部在变重**:
+p99 从 5.9e-3 涨到 2.2e-2(3.7 倍),过门限(KL>1e-3)的比例 2.6% → 3.9%。所以读者的判断对:**top-1(0.8%~1.2%)掩盖了尾部的恶化**;
+但"慢性漂移"不是发生在每一处,而是**少数位置在深处变得更差**。
+
+被排除的 ~20% 退化位置(参考自身 logit 在 1e3~1e10)与之前一致:那里 KL 无量纲意义(1e6 尺度上 0.5% 的相对误差就是数千 nat)。
+
+### 3. 外部对照:llama.cpp 的 `--kl-divergence`
+
+同一模型、同一段文本(512 token),llama.cpp 自己的 fp16 KV 作为基线,再把 KV 换成 `-ctk q8_0 -ctv q8_0`:
+
+```
+llama-perplexity ... --save-all-logits /tmp/ll_base.bin          # fp16 KV 基线
+llama-perplexity ... -ctk q8_0 -ctv q8_0 --kl-divergence --kl-divergence-base /tmp/ll_base.bin
+  -> KLD: -0.000017 / -0.000031 / -0.000041 (逐千分位), Mean Δp: -0.000 ± 0.000 %
+```
+
+即 **|KL| ≈ 4e-5**,而我们的 int8 KV 在同一量级上是 **≈1e-4**(中位数 2e-5、p90 2e-4)。两者同数量级 → **本仓库的 KL harness 得到
+独立实现印证**;而 2-3 倍的差距正好来自粒度:llama.cpp 的 q8_0 是 **32 元素一块**(每个 256 维头 8 个 scale),我们是
+**一个 256 维头一个 scale**。这与 §3 的模拟结论一致(把 scale 细分到 64 维能把 KL 拉低一个档),也解释了为什么 M29g 的非对称
+量化救不了它:问题在**分组**,不在零点。
+
+### 4. K/V 拆分(K fp16 / V int8):已经实现,但**当前不可用**
+
+- 新增两个内核 `k_flash_prefill_k16v8` 与 `k_attn_dec_split_k16v8`(K 走 fp16 精确路径、V 走 int8 + 每 (位置, KV head) 一个 scale),
+  引擎侧把 KV 模式的 K/V 两个方向彻底拆开(`kvInt8K` / `kvInt8V`、各自的层偏移、各自的 scale 平面、前缀缓存 3 平面),
+  并新增模式 `KATA_KV=int8v`。
+- **验证到的事实**:V 的 int8 数据平面在 `int8` 与 `int8v` 两种模式下**逐字节相同**(100%),说明 V 侧的量化与寻址正确;
+  K 侧在混合模式下**完全没有被写入**(K 平面前 64 KB 全零,而 fp16 模式 65421/65536 字节非零)。
+- 定位到的两个真 bug(已修):`prep` 内核把"写进缓存还是写进暂存"的偏移与"哪一侧量化"的标志混用(`cOff` 应为 `kvInt8K`),
+  以及混合模式下 K/V 需要**两个不同的行偏移**(K 按层偏移绑定 → 0;V 写暂存 → pos0),为此给 prep 内核加了 `cacheOffV`。
+  但修完之后 K 仍然未被写入,原因未定位。
+- 因此 **`KATA_KV=int8v` 现在会直接拒绝运行并打印原因**,而不是给出错误结果。fp16 与 int8 两条路径的数值与改动前**完全一致**
+  (2048 位置:fp16 KL 0/2048-2048,`int8` KL 3.1e+01 / 99.51%,与 M29f 相同),生成正常。
+
+**下一步(接手的入口)**:在混合模式下 dump `kvScrK` 与 `kcache` 的第 0 层并对比 prep 的实际写地址;或者临时把 prep 的
+buffer 7 在混合模式下改绑到暂存区 + 把暂存内容拷进缓存,二分出是"写错位置"还是"没写"。

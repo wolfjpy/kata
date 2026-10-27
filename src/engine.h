@@ -68,11 +68,17 @@ public:
     uint8_t* convPtr() const { return (uint8_t*)convState->contents(); }
     size_t convBytes() const { return convState->length(); }
     // KV planes of the main attention layers: fp16 -> {K, V}; int8 -> {K, V, K scales, V scales} (one fp16 scale per position and KV head)
-    bool kvInt8 = false;     // --kv int8 / KATA_KV=int8 (lossy; set before load)
-    uint32_t kvPlanes() const { return kvInt8 ? 4u : 2u; }
-    size_t kvPlaneRow(uint32_t plane) const { return plane < 2 ? (size_t)kata::kKvDim * (kvInt8 ? 1 : 2) : (size_t)4 * 2; }
+    // KATA_KV / --kv: "fp16" (default), "int8" (both caches 8-bit) or "int8v" (keys fp16, values 8-bit — the keys are what
+    // perturbs the softmax scores, so this keeps the accuracy of the exact path and halves only the value cache)
+    bool kvInt8 = false, kvInt8K = false, kvInt8V = false;
+    uint32_t kvPlanes() const { return kvInt8K && kvInt8V ? 4u : kvInt8 ? 3u : 2u; }
+    size_t kvPlaneRow(uint32_t plane) const {
+        if (plane == 0) return (size_t)kata::kKvDim * (kvInt8K ? 1 : 2);
+        if (plane == 1) return (size_t)kata::kKvDim * (kvInt8V ? 1 : 2);
+        return (size_t)4 * 2; }
     uint8_t* kvPlanePtr(uint32_t attnLayer, uint32_t plane) const {
-        MTL::Buffer* b = plane == 0 ? kcache : plane == 1 ? vcache : plane == 2 ? kscale : vscale; return (uint8_t*)b->contents() + (size_t)attnLayer * maxCtx * kvPlaneRow(plane); }
+        MTL::Buffer* b = plane == 0 ? kcache : plane == 1 ? vcache : (plane == 2 ? (kvInt8K ? kscale : vscale) : vscale);
+        return (uint8_t*)b->contents() + (size_t)attnLayer * maxCtx * kvPlaneRow(plane); }
     // (the single MTP layer keeps an fp16 cache in every mode)
     uint8_t* mtpKvPtr(bool value) const { return (uint8_t*)(value ? mV : mK)->contents(); }
     uint8_t* hPrevPtr() const { return (uint8_t*)hPrevBuf->contents(); }
@@ -136,9 +142,10 @@ private:
     void encMtpKv(MTL::ComputeCommandEncoder* e, uint32_t rowStart, uint32_t M, uint32_t pos0);
     MTL::Buffer *ilvBuf = nullptr;
     MTL::Buffer *decQp = nullptr, *decAcc = nullptr, *decM = nullptr, *decL = nullptr;   // flash-decoding scratch: packed Q, per-split partials
-    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0, MTL::Buffer* kmn = nullptr);
-    MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
-    uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * kata::kKvDim * (kvInt8 ? 1u : 2u); }
+    void dDecAttn(MTL::ComputeCommandEncoder* e, MTL::Buffer* q, MTL::Buffer* kc, uint64_t kvOff, MTL::Buffer* vc, MTL::Buffer* gate, MTL::Buffer* out, uint32_t posBase, uint32_t T, uint32_t firstPos, MTL::Buffer* ksc = nullptr, MTL::Buffer* vsc = nullptr, uint64_t scOff = 0, MTL::Buffer* kmn = nullptr, uint64_t kvOffV = ~0ull);
+    MTL::Buffer *kscale = nullptr, *vscale = nullptr, *kvScrK = nullptr, *kvScrV = nullptr, *kscDummy = nullptr;   // int8 KV: scales and the fp16 scratch rows the prep kernels write before quantisation
+    uint64_t kvLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * kata::kKvDim * (kvInt8K ? 1u : 2u); }
+    uint64_t kvLayerOffV(uint32_t ai) const { return (uint64_t)ai * maxCtx * kata::kKvDim * (kvInt8V ? 1u : 2u); }
     uint64_t scLayerOff(uint32_t ai) const { return (uint64_t)ai * maxCtx * 4 * 2; }
     void dKvQuant(MTL::ComputeCommandEncoder* e, uint32_t T, uint32_t pos0, uint32_t ai);
     void loadMtp();

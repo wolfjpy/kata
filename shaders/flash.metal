@@ -190,3 +190,117 @@ kernel void k_kv_quant(device const half* ks [[buffer(0)]], device const half* v
 }
 template [[host_name("k_kv_quant")]] kernel void k_kv_quant<true>(device const half*, device const half*, device int8_t*, device int8_t*, device half*, device half*, constant uint&, device half*, uint2, uint, uint, uint);
 template [[host_name("k_kv_quant_sym")]] kernel void k_kv_quant<false>(device const half*, device const half*, device int8_t*, device int8_t*, device half*, device half*, constant uint&, device half*, uint2, uint, uint, uint);
+
+// -----------------------------------------------------------------------------------------------------------------------
+// Mixed KV cache: the keys stay fp16 (exact) while the values are int8 with one fp16 scale per (position, KV head).
+// Key quantisation is what perturbs the softmax scores, so this keeps the accuracy of the exact path and still halves the
+// value half of the cache. Same structure as k_flash_prefill / k_attn_dec_split with the key scale and mean stripped out.
+kernel void k_flash_prefill_k16v8(device half* q [[buffer(0)]], device half* kc [[buffer(1)]], device int8_t* vc [[buffer(2)]], device const float* gate [[buffer(3)]],
+                                  device float* out [[buffer(4)]], constant uint& posBase [[buffer(5)]], constant uint& Mtok [[buffer(6)]], device const half* ksc [[buffer(7)]], device const half* vsc [[buffer(8)]], device const half* kmn [[buffer(9)]],
+                                  uint2 tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
+    constexpr int QR = 16, KT = 64, D = 256, KVD = 1024, QD = 6144;
+    threadgroup half Ptg[6][QR][KT]; threadgroup float vS[6][KT];
+    threadgroup float mTG[6][QR], lTG[6][QR], aTG[6][QR], sTG[6][QR], tmpTG[6][QR];
+    const uint qt = tg.x, kvh = tg.y, h = kvh * 6u + sg; const uint q0 = qt * QR;
+    const uint rowsValid = min(uint(QR), Mtok - q0);
+    const uint posEnd = posBase + q0 + rowsValid;
+    const uint nTiles = (posEnd + KT - 1) / KT;
+    constexpr auto d1 = matmul2d_descriptor(QR, KT, D, false, true, false, matmul2d_descriptor::mode::multiply);
+    constexpr auto d2 = matmul2d_descriptor(QR, D, KT, false, false, false, matmul2d_descriptor::mode::multiply_accumulate);
+    matmul2d<d1, execution_simdgroup> op1; matmul2d<d2, execution_simdgroup> op2;
+    array<int, 2> sQ = {1, QD}, sKV = {1, KVD}, sP = {1, KT};
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tQ(q + ulong(q0) * QD + h * D, dextents<int32_t, 2>(D, QR), sQ);
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tK0(kc + kvh * D, dextents<int32_t, 2>(D, KT), sKV);
+    tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> tV0(vc + kvh * D, dextents<int32_t, 2>(D, KT), sKV);
+    tensor<threadgroup half, dextents<int32_t, 2>, tensor_inline> tP(&Ptg[sg][0][0], dextents<int32_t, 2>(KT, QR), sP);
+    auto cS = op1.get_destination_cooperative_tensor<decltype(tQ), decltype(tK0), float>();
+    auto cO = op2.get_destination_cooperative_tensor<decltype(tP), decltype(tV0), float>();
+    auto cR = op1.get_row_reduction_destination_cooperative_tensor<decltype(tQ), decltype(tK0), float>();
+    array<int, 1> s1 = {1};
+    tensor<threadgroup float, dextents<int32_t, 1>, tensor_inline> tTmp(&tmpTG[sg][0], dextents<int32_t, 1>(QR), s1);
+    const uint capS = cS.get_capacity(), capO = cO.get_capacity();
+    for (uint i = 0; i < capO; i++) cO[i] = 0.0f;
+    if (lane < QR) { mTG[sg][lane] = -INFINITY; lTG[sg][lane] = 0.0f; }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint kt = 0; kt < nTiles; kt++) {
+        const uint k0 = kt * KT;
+        const int nk = int(min(uint(KT), posEnd - k0));
+        tensor<device half, dextents<int32_t, 2>, tensor_inline> tK(kc + ulong(k0) * KVD + kvh * D, dextents<int32_t, 2>(D, nk), sKV);
+        for (uint c = lane; c < uint(KT); c += 32u) { const bool ok = int(c) < nk; vS[sg][c] = ok ? float(vsc[ulong(k0 + c) * 4ul + kvh]) : 0.0f; }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        op1.run(tQ, tK, cS);
+        for (uint i = 0; i < capS; i++) if (cS.is_valid_element(i)) { auto ix = cS.get_multidimensional_index(i); const uint key = k0 + uint(ix[0]), pos = posBase + q0 + uint(ix[1]); if (key > pos) cS[i] = -INFINITY; }
+        reduce_rows(cS, cR, reduction_operation::max, -INFINITY);
+        cR.store(tTmp);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < QR) { const float mo = mTG[sg][lane], mn = max(mo, tmpTG[sg][lane]); aTG[sg][lane] = (mn == -INFINITY) ? 1.0f : exp(mo - mn); mTG[sg][lane] = mn; sTG[sg][lane] = (mn == -INFINITY) ? 0.0f : mn; }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint i = 0; i < capS; i++) if (cS.is_valid_element(i)) { auto ix = cS.get_multidimensional_index(i); const float p = exp(cS[i] - sTG[sg][ix[1]]); cS[i] = p; Ptg[sg][ix[1]][ix[0]] = half(p * vS[sg][uint(ix[0])]); }
+        reduce_rows(cS, cR, reduction_operation::sum, 0.0f);
+        cR.store(tTmp);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < QR) lTG[sg][lane] = lTG[sg][lane] * aTG[sg][lane] + tmpTG[sg][lane];
+        for (uint j = 0; j < capO; j++) if (cO.is_valid_element(j)) { auto ix = cO.get_multidimensional_index(j); cO[j] *= aTG[sg][ix[1]]; }
+        tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> tV(vc + ulong(k0) * KVD + kvh * D, dextents<int32_t, 2>(D, nk), sKV);
+        op2.run(tP, tV, cO);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint j = 0; j < capO; j++) if (cO.is_valid_element(j)) {
+        auto ix = cO.get_multidimensional_index(j); const uint r = uint(ix[1]), d = uint(ix[0]);
+        if (r < rowsValid) { const ulong o = ulong(q0 + r) * QD + h * D + d; out[o] = cO[j] / lTG[sg][r] * sigmoidf(gate[o]); }
+    }
+}
+
+kernel void k_attn_dec_split_k16v8(device half* qp [[buffer(0)]], device half* kc [[buffer(1)]], device int8_t* vc [[buffer(2)]], device float* pacc [[buffer(3)]], device float* pm [[buffer(4)]], device float* pl [[buffer(5)]],
+                                   constant uint4& prm [[buffer(6)]], device const half* ksc [[buffer(7)]], device const half* vsc [[buffer(8)]], device const half* kmn [[buffer(9)]],
+                                   uint2 tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    constexpr int QR = 16, KT = 64, D = 256, KVD = 1024;
+    threadgroup half Ptg[QR][KT]; threadgroup float vS[KT]; threadgroup float mTG[QR], lTG[QR], aTG[QR], sTG[QR], tmpTG[QR];
+    const uint split = tg.x, kvh = tg.y;
+    const uint posBase = prm.x, T = prm.y, firstPos = prm.z, chunk = prm.w;
+    const uint posEnd = posBase + T;
+    const uint lo = firstPos + split * chunk, hi = min(lo + chunk, posEnd);
+    constexpr auto d1 = matmul2d_descriptor(QR, KT, D, false, true, false, matmul2d_descriptor::mode::multiply);
+    constexpr auto d2 = matmul2d_descriptor(QR, D, KT, false, false, false, matmul2d_descriptor::mode::multiply_accumulate);
+    matmul2d<d1, execution_simdgroup> op1; matmul2d<d2, execution_simdgroup> op2;
+    array<int, 2> sQ = {1, D}, sKV = {1, KVD}, sP = {1, KT};
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tQ(qp + kvh * QR * D, dextents<int32_t, 2>(D, QR), sQ);
+    tensor<device half, dextents<int32_t, 2>, tensor_inline> tK0(kc + kvh * D, dextents<int32_t, 2>(D, KT), sKV);
+    tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> tV0(vc + kvh * D, dextents<int32_t, 2>(D, KT), sKV);
+    tensor<threadgroup half, dextents<int32_t, 2>, tensor_inline> tP(&Ptg[0][0], dextents<int32_t, 2>(KT, QR), sP);
+    auto cS = op1.get_destination_cooperative_tensor<decltype(tQ), decltype(tK0), float>();
+    auto cO = op2.get_destination_cooperative_tensor<decltype(tP), decltype(tV0), float>();
+    auto cR = op1.get_row_reduction_destination_cooperative_tensor<decltype(tQ), decltype(tK0), float>();
+    array<int, 1> s1 = {1};
+    tensor<threadgroup float, dextents<int32_t, 1>, tensor_inline> tTmp(&tmpTG[0], dextents<int32_t, 1>(QR), s1);
+    const uint capS = cS.get_capacity(), capO = cO.get_capacity();
+    for (uint i = 0; i < capO; i++) cO[i] = 0.0f;
+    if (lane < QR) { mTG[lane] = -INFINITY; lTG[lane] = 0.0f; }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint k0 = lo; k0 < hi; k0 += KT) {
+        const int nk = int(min(uint(KT), hi - k0));
+        tensor<device half, dextents<int32_t, 2>, tensor_inline> tK(kc + ulong(k0) * KVD + kvh * D, dextents<int32_t, 2>(D, nk), sKV);
+        for (uint c = lane; c < uint(KT); c += 32u) { const bool ok = int(c) < nk; vS[c] = ok ? float(vsc[ulong(k0 + c) * 4ul + kvh]) : 0.0f; }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        op1.run(tQ, tK, cS);
+        for (uint i = 0; i < capS; i++) if (cS.is_valid_element(i)) { auto ix = cS.get_multidimensional_index(i); const uint key = k0 + uint(ix[0]), tok = uint(ix[1]) / 6u; if (uint(ix[1]) >= 6u * T || key > posBase + tok || key >= hi) cS[i] = -INFINITY; }
+        reduce_rows(cS, cR, reduction_operation::max, -INFINITY);
+        cR.store(tTmp);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < QR) { const float mo = mTG[lane], mn = max(mo, tmpTG[lane]); aTG[lane] = (mn == -INFINITY) ? 1.0f : exp(mo - mn); mTG[lane] = mn; sTG[lane] = (mn == -INFINITY) ? 0.0f : mn; }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint i = 0; i < capS; i++) if (cS.is_valid_element(i)) { auto ix = cS.get_multidimensional_index(i); const float p = exp(cS[i] - sTG[ix[1]]); cS[i] = p; Ptg[ix[1]][ix[0]] = half(p * vS[uint(ix[0])]); }
+        reduce_rows(cS, cR, reduction_operation::sum, 0.0f);
+        cR.store(tTmp);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        if (lane < QR) lTG[lane] = lTG[lane] * aTG[lane] + tmpTG[lane];
+        for (uint j = 0; j < capO; j++) if (cO.is_valid_element(j)) { auto ix = cO.get_multidimensional_index(j); cO[j] *= aTG[ix[1]]; }
+        tensor<device int8_t, dextents<int32_t, 2>, tensor_inline> tV(vc + ulong(k0) * KVD + kvh * D, dextents<int32_t, 2>(D, nk), sKV);
+        op2.run(tP, tV, cO);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    const uint nSplits = (posEnd - firstPos + chunk - 1) / chunk;
+    const ulong rowBase = (ulong(kvh) * nSplits + split) * QR;
+    for (uint j = 0; j < capO; j++) if (cO.is_valid_element(j)) { auto ix = cO.get_multidimensional_index(j); pacc[(rowBase + uint(ix[1])) * D + uint(ix[0])] = cO[j]; }
+    if (lane < QR) { pm[rowBase + lane] = mTG[lane]; pl[rowBase + lane] = lTG[lane]; }
+}

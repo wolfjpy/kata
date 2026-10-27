@@ -179,13 +179,13 @@ kernel void k_gdn_step_b(device const float* conv_out [[buffer(0)]], device cons
 kernel void k_attn_prep_b(device const float* qfull [[buffer(0)]], device const float* kproj [[buffer(1)]], device const float* vproj [[buffer(2)]],
                           device const float* qnorm [[buffer(3)]], device const float* knorm [[buffer(4)]],
                           device float* qout [[buffer(5)]], device float* gate_out [[buffer(6)]],
-                          device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos0 [[buffer(9)]], constant uint& h0 [[buffer(10)]], constant uint& cacheOff [[buffer(11)]],
+                          device half* kcache [[buffer(7)]], device half* vcache [[buffer(8)]], constant uint& pos0 [[buffer(9)]], constant uint& h0 [[buffer(10)]], constant uint& cacheOff [[buffer(11)]], constant uint& cacheOffV [[buffer(12)]],
                           uint2 tgp [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
     threadgroup float xs[256]; threadgroup float part[8];
     const uint h = tgp.x + h0, t = tgp.y; const uint pos = pos0 + t;
     device const float* qf = qfull + ulong(t) * 12288ul; device const float* kp = kproj + ulong(t) * 1024ul; device const float* vp = vproj + ulong(t) * 1024ul;
     device float* qo = qout + ulong(t) * 6144ul; device float* go = gate_out + ulong(t) * 6144ul;
-    if (h >= 28) { uint vh = h - 28; vcache[ulong(pos - cacheOff) * kata::kKvDim + vh * 256 + tid] = half(vp[vh * 256 + tid]); return; }
+    if (h >= 28) { uint vh = h - 28; vcache[ulong(pos - cacheOffV) * kata::kKvDim + vh * 256 + tid] = half(vp[vh * 256 + tid]); return; }
     float v; device const float* w;
     if (h < 24) { v = qf[h * 512 + tid]; go[h * 256 + tid] = qf[h * 512 + 256 + tid]; w = qnorm; }
     else { v = kp[(h - 24) * 256 + tid]; w = knorm; }

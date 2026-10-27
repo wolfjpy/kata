@@ -128,3 +128,73 @@ exact but needs a second 16x256 accumulator for V (128 registers/lane), which do
 So the honest status of the int8 KV cache: **99.51% top-1, opt-in, not a default**; the coarse per-(position, head)
 scale is a property of what the `matmul2d` path can fold, and passing the 99.7% gate needs either fp8 storage or
 per-group scales with one MMA per group.
+
+## M31: long-context per-position KL, the external cross-check, and the K/V split
+
+Driven by two points from a reader: (1) top-1 agreement can hide drift that only appears deep into a long context, so log
+**per-position KL**; (2) if int8 on both K and V hurts, K is usually the touchier one, so run the cheap
+**K fp16 / V int8** A/B. Both are right, and here is the data.
+
+### 1. Tooling: per-position KL and depth buckets
+
+`kl-eval` gained `KATA_KL_TRACE=1`, which prints `pos KL ref_logitmax cand_logitmax top1` per position plus a summary
+**bucketed by depth** (0-1K / 1-4K / 4K-8K / 8K-16K / 16K-32K / >=32K), and `KATA_KV_DUMP=file`, which writes the first
+64 KB of layer 0's K and V planes so two cache modes can be compared byte for byte.
+
+**Control experiment** (the same reference against itself, fp16 KV, 16384 tokens): `mean KL 0.000e+00 | max 0.000e+00 |
+4096/4096` — the harness is deterministic, so the depth trend below is signal rather than noise.
+
+### 2. The depth curve: int8 KV against fp16 KV, 16384 tokens, 4096 positions
+
+Quantiles after excluding degenerate positions (reference top logit >= 1e3, about 20% of them):
+
+| depth | n | p50 | p90 | p99 | max | KL>1e-3 | top-1 miss |
+|---|---|---|---|---|---|---|---|
+| 0-4K | 1021 | 2.45e-05 | 2.32e-04 | 5.88e-03 | 1.01e-01 | 2.6% | 0.8% |
+| 4-8K | 1020 | 2.16e-05 | 2.09e-04 | 9.44e-03 | 4.36e-02 | 3.3% | 0.6% |
+| 8-12K | 1020 | 1.94e-05 | 2.11e-04 | 1.07e-02 | 4.16e+00 | 3.1% | 1.2% |
+| 12-16K | 1020 | 7.36e-06 | 3.13e-04 | 2.21e-02 | 1.01e+00 | 3.9% | 0.8% |
+
+**The median does not grow with depth** (regression of log10(KL) on position: **-0.022 dex per 1K tokens**, i.e. flat), but
+**the tail gets heavier**: p99 goes from 5.9e-3 to 2.2e-2 (3.7x) and the fraction over the gate (KL > 1e-3) from 2.6% to
+3.9%. So the reader is right that **top-1 (0.8-1.2%) hides the tail worsening**; but the drift is not everywhere — a few
+positions get worse deep in the context.
+
+The excluded ~20% degenerate positions (the reference's own logits at 1e3-1e10) behave as before: KL is meaningless there
+(a 0.5% relative error on a 1e6 scale is thousands of nats).
+
+### 3. External cross-check: llama.cpp's `--kl-divergence`
+
+Same model, same text (512 tokens), llama.cpp's own fp16 KV as the base, then the KV switched to `-ctk q8_0 -ctv q8_0`:
+
+```
+llama-perplexity ... --save-all-logits /tmp/ll_base.bin          # fp16 KV baseline
+llama-perplexity ... -ctk q8_0 -ctv q8_0 --kl-divergence --kl-divergence-base /tmp/ll_base.bin
+  -> KLD: -0.000017 / -0.000031 / -0.000041 (per mille buckets), Mean dp: -0.000 +- 0.000 %
+```
+
+i.e. **|KL| ~ 4e-5**, against our int8 KV at **~1e-4** on the same order (median 2e-5, p90 2e-4). Same order of magnitude, so
+**this repository's KL harness is corroborated by an independent implementation**; the 2-3x gap is exactly the granularity:
+llama.cpp's q8_0 uses **32-element blocks** (8 scales per 256-dim head) while we use **one scale per 256-dim head**. That
+matches §3's simulation (splitting the scale to 64 dims lowers the KL by a tier) and explains why M29g's asymmetric
+quantisation could not save it: the problem is the **grouping**, not the zero point.
+
+### 4. The K/V split (K fp16 / V int8): implemented, but **not usable yet**
+
+- Two new kernels, `k_flash_prefill_k16v8` and `k_attn_dec_split_k16v8` (exact fp16 keys, int8 values with one scale per
+  (position, KV head)), the engine split into `kvInt8K` / `kvInt8V` throughout (separate layer offsets, separate scale
+  planes, a 3-plane prefix-cache layout) and a new mode `KATA_KV=int8v`.
+- **What is verified**: V's int8 data plane is **byte-identical** between `int8` and `int8v` (100%), so V quantisation and
+  addressing are correct; K is **not written at all** in mixed mode (the first 64 KB of the K plane is all zeros, against
+  65421/65536 non-zero bytes in fp16 mode).
+- Two real bugs were found and fixed: the prep kernel conflated "write into the cache or into the scratch" with "which side
+  is quantised" (`cOff` had to be `kvInt8K`), and mixed mode needs **two different row offsets** (K is bound at the layer
+  offset -> 0, V writes into the scratch -> pos0), so the prep kernel gained `cacheOffV`. After those fixes K is still not
+  written and the cause is not located.
+- Therefore **`KATA_KV=int8v` now refuses to run and says why** rather than returning wrong numbers. The fp16 and int8 paths
+  are **numerically identical to before these changes** (2048 positions: fp16 KL 0, 2048/2048; `int8` KL 3.1e+01 / 99.51%,
+  the same as M29f), and generation works.
+
+**Next step (the entry point for whoever picks this up)**: in mixed mode, dump `kvScrK` and `kcache` for layer 0 and compare
+the prep kernel's actual write addresses, or temporarily bind the prep's buffer 7 to the scratch in mixed mode and copy the
+scratch into the cache, to bisect between "writes to the wrong place" and "does not write".

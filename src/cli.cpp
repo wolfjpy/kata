@@ -194,7 +194,7 @@ int cmdVerifyCheck(int argc, char** argv) {
 int cmdKlEval(int argc, char** argv) {
     std::string model, file, metallib = "build/kata.metallib", spill = "/tmp/kata_kl_spill.bin", saveRef, cmpRef, i8spec = "all"; bool i8given = false; int ntok = 16384, keep = 64, chunk = 1024;
     for (int i = 2; i < argc; i++) { std::string a = argv[i]; if (a == "--model") model = argv[++i]; else if (a == "--file") file = argv[++i]; else if (a == "--tokens") ntok = atoi(argv[++i]); else if (a == "--keep") keep = atoi(argv[++i]); else if (a == "--i8") { i8spec = argv[++i]; i8given = true; } else if (a == "--fast-ffn") { i8spec = "ffn"; i8given = true; } else if (a == "--save-ref") saveRef = argv[++i]; else if (a == "--ref") cmpRef = argv[++i]; else if (a == "--chunk") chunk = atoi(argv[++i]); else if (a == "--metallib") metallib = argv[++i]; }
-    if (model.empty() || file.empty()) { fprintf(stderr, "usage: kata kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n"); return 1; }
+    if (model.empty() || file.empty()) { fprintf(stderr, "usage: kata kl-eval --model M.gguf --file corpus.txt [--tokens N] [--keep K] [--chunk C]\n       KATA_KL_TRACE=1 prints the per-position KL trace and a KL-by-depth table; KATA_KL_DBG=1 prints outliers\n"); return 1; }
     Engine eng; if (!eng.load(model, metallib, (uint32_t)ntok + 64, 0)) return 1; Tokenizer tok; if (!tok.load(eng.gg)) return 1;
     std::vector<int32_t> ids = tok.encode(readFile(file.c_str()), false); if ((int)ids.size() > ntok) ids.resize((size_t)ntok);
     const int V = (int)kata::kVocab; const int n = (int)ids.size(); printf("corpus: %d tokens, chunk %d, comparing the last %d positions of each chunk\n", n, chunk, keep);
@@ -208,6 +208,9 @@ int cmdKlEval(int argc, char** argv) {
     if (!saveRef.empty()) { pass(i8given, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fclose(sp); printf("saved the reference logits of this configuration to %s\n", saveRef.c_str()); return 0; }
     if (!single) { pass(false, [&](const float* lg, int nl) { fwrite(lg, 4, (size_t)nl * V, sp); }); fflush(sp); fseek(sp, 0, SEEK_SET); }
     double sumKl = 0, maxKl = 0, sumAbs = 0; size_t cnt = 0, agree = 0; std::vector<float> ref((size_t)keep * V);
+    const bool trace = getenv("KATA_KL_TRACE") != nullptr;   // per-position KL trace + a KL-by-depth-bucket summary
+    static const int bkEdges[6] = {1024, 4096, 8192, 16384, 32768, 1 << 30};
+    double bkSum[6] = {0, 0, 0, 0, 0, 0}, bkMax[6] = {0, 0, 0, 0, 0, 0}; size_t bkN[6] = {0, 0, 0, 0, 0, 0}, bkBad[6] = {0, 0, 0, 0, 0, 0};
     pass(single ? i8given : true, [&](const float* lg, int nl) {
         if (fread(ref.data(), 4, (size_t)nl * V, sp) != (size_t)nl * V) { fprintf(stderr, "spill read failed\n"); exit(1); }
         for (int r = 0; r < nl; r++) {
@@ -216,11 +219,20 @@ int cmdKlEval(int argc, char** argv) {
             double za = 0, zb = 0; for (int k = 0; k < V; k++) { za += std::exp((double)a[k] - ma); zb += std::exp((double)b[k] - mb); }
             const double la = std::log(za) + ma, lb = std::log(zb) + mb; double kl = 0, ad = 0;
             for (int k = 0; k < V; k++) { const double l = (double)a[k] - la, p = std::exp(l); if (p > 1e-12) kl += p * (l - ((double)b[k] - lb)); ad = std::max(ad, (double)std::fabs(a[k] - b[k])); }
+            { int bi = 0; while (bi < 5 && gbase + r >= bkEdges[bi]) bi++; bkSum[bi] += kl; bkN[bi]++; bkMax[bi] = std::max(bkMax[bi], kl); bkBad[bi] += (ba != bb); }
+            if (trace) printf("%d %.6e %.4g %.4g %s\n", gbase + r, kl, ma, mb, ba == bb ? "ok" : "DIFF");
             if (getenv("KATA_KL_DBG") && kl > 1.0) fprintf(stderr, "  [bad] pos %d (row %d of chunk) KL %.3e logitmax ref %.4g / int8 %.4g\n", gbase + r, r, kl, ma, mb);
             sumKl += kl; maxKl = std::max(maxKl, kl); sumAbs = std::max(sumAbs, ad); cnt++; agree += (ba == bb);
         }
         printf("\r  compared %zu positions, running mean KL %.3e, top-1 %.2f%%", cnt, sumKl / cnt, 100.0 * agree / cnt); fflush(stdout);
     });
+    if (trace) { printf("\n  KL by depth:\n    %-12s %8s %10s %10s %10s\n", "depth", "positions", "mean KL", "max KL", "top-1 miss");
+        for (int i = 0; i < 6; i++) if (bkN[i]) printf("    %-12s %8zu %10.3e %10.3e %8zu (%.2f%%)\n",
+            i == 0 ? "0-1K" : i == 1 ? "1K-4K" : i == 2 ? "4K-8K" : i == 3 ? "8K-16K" : i == 4 ? "16K-32K" : ">=32K",
+            bkN[i], bkSum[i] / (double)bkN[i], bkMax[i], bkBad[i], 100.0 * (double)bkBad[i] / (double)bkN[i]); }
+    if (const char* dv = getenv("KATA_KV_DUMP")) {   // dump the first 64 KB of layer 0's K and V planes, to diff two cache modes
+        FILE* f = fopen(dv, "wb"); for (uint32_t pl : {0u, 1u}) fwrite(eng.kvPlanePtr(0, pl), 1, 65536, f); fclose(f);
+        fprintf(stderr, "[dump] wrote %s (planes 0,1 of layer 0)\n", dv); }
     printf("\n%s: %zu positions | mean KL %.3e nat | max KL %.3e | max |logit diff| %.3f | top-1 agreement %zu/%zu (%.2f%%)\n", single ? "this configuration vs the reference file" : "int8 vs exact fp16", cnt, sumKl / cnt, maxKl, sumAbs, agree, cnt, 100.0 * agree / cnt);
     fclose(sp); if (!single) remove(spill.c_str()); return 0;
 }
