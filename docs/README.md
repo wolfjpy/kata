@@ -30,8 +30,8 @@ want the details.
 **Phase 1 — getting it correct**
 | Document | One line |
 |---|---|
-| [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) | M0: baseline measurement, the reference tooling, and the project skeleton. |
-| [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) | M1/M2: a numerically correct full forward — all 64 layers — checked against the reference logits. |
+| [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) · **[.en](reports/M0-baseline-and-skeleton.en.md)** | M0: baseline measurement, the reference tooling, and the project skeleton. |
+| [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) · **[.en](reports/M2-correct-forward.en.md)** | M1/M2: a numerically correct full forward — all 64 layers — checked against the reference logits. |
 | [`CHECKPOINT-001.md`](CHECKPOINT-001.md) | Checkpoint 1: the reference sources are read end to end, the architecture is pinned down, the first kernels are written. The longest document here (~25k characters) and the most useful if you want the model's internals. |
 
 **Phase 2 — make it fast**
@@ -43,7 +43,7 @@ want the details.
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) | M12: 16-byte-wide weight reads. Gate not met, not implemented. |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11: int8 KV cache. Includes the later correction: the original quality claim did not reproduce, the real number is 99.51% top-1, and asymmetric quantisation measured worse. |
-| [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17: a batch of small ideas, each measured; none cleared the 1% keep line. |
+| [`reports/M17-small-items.md`](reports/M17-small-items.md) · **[.en](reports/M17-small-items.en.md)** | M17: a batch of small ideas, each measured; none cleared the 1% keep line. |
 | [`reports/M26-verification-side.md`](reports/M26-verification-side.md) · **[.en](reports/M26-verification-side.en.md)** | M26: arbitrary-width verification, state snapshots and commit. |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) · **[.en](reports/M27a-small-grid-fixes.en.md)** | M27a: small grid fixes in the verification window — 20% off per round, ceiling raised to +38%. |
 
@@ -52,7 +52,7 @@ want the details.
 |---|---|
 | [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) | M4: MTP speculative decoding at depth 1 with a 2-wide verification. |
 | [`reports/M7-speculation-options.md`](reports/M7-speculation-options.md) | M7: the other speculation options (DFlash2, the 2B drafter, deeper MTP chains) and the cost of wide verification. |
-| [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) | M10: sampling-aware drafts — estimated offline, gate not met, implementation deferred. |
+| [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10: sampling-aware drafts — estimated offline, gate not met, implementation deferred. |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) | M14: the wide-verification microbenchmark gate; it did not pass, so DFlash2 (M15/M16) was closed. |
 | [`reports/M25-wide-verify-kernel.md`](reports/M25-wide-verify-kernel.md) · **[.en](reports/M25-wide-verify-kernel.en.md)** | M25: the wide verification kernel that paved the way for DFlash2 — and the ablation showing the MMA is the floor. |
 | [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) | M28a: loading the DFlash2 drafter and decoding its Q4_K / Q6_K tensors. |
@@ -63,7 +63,7 @@ want the details.
 **Infrastructure**
 | Document | One line |
 |---|---|
-| [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6: tokenizer, chat template, sampling and the command line. |
+| [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) · **[.en](reports/M6-tokenizer-chat-cli.en.md)** | M6: tokenizer, chat template, sampling and the command line. |
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9: the persistent prefix cache (18.6 s → 0.03 s on a repeated 3.6K-token prompt). |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01: a read-through assessment of the repository, the open issues and the next steps. |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | Checkpoint 2: state of play after the decode and prefill work. |
@@ -93,8 +93,8 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 **第一阶段 —— 先做对**
 | 文档 | 一句话 |
 |---|---|
-| [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) | M0:基线测量、参考工具链与项目骨架。 |
-| [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) | M1/M2:数值正确的完整前向(全部 64 层),与参考 logits 对齐。 |
+| [`reports/M0-baseline-and-skeleton.md`](reports/M0-baseline-and-skeleton.md) · **[.en](reports/M0-baseline-and-skeleton.en.md)** | M0:基线测量、参考工具链与项目骨架。 |
+| [`reports/M2-correct-forward.md`](reports/M2-correct-forward.md) · **[.en](reports/M2-correct-forward.en.md)** | M1/M2:数值正确的完整前向(全部 64 层),与参考 logits 对齐。 |
 | [`CHECKPOINT-001.md`](CHECKPOINT-001.md) | 检查点 1:通读参考源码、钉死架构、写出第一批内核。全仓库最长的一篇(约 2.5 万字),想了解模型内部结构看它。 |
 
 **第二阶段 —— 做快**
@@ -106,7 +106,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) | M12:16 字节宽权重读取。闸门未达到,不实现。 |
 | [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
 | [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11:int8 KV 缓存。含后期更正:最初的画质结论无法复现,真实值是 top-1 99.51%,而非对称量化实测更差。 |
-| [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17:一批小想法,逐个测量,没有一个达到 1% 的保留线。 |
+| [`reports/M17-small-items.md`](reports/M17-small-items.md) · **[.en](reports/M17-small-items.en.md)** | M17:一批小想法,逐个测量,没有一个达到 1% 的保留线。 |
 | [`reports/M26-verification-side.md`](reports/M26-verification-side.md) · **[.en](reports/M26-verification-side.en.md)** | M26:任意宽度验证、状态快照与提交。 |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) · **[.en](reports/M27a-small-grid-fixes.en.md)** | M27a:验证窗口的小网格修复 —— 每轮省 20%,上限抬到 +38%。 |
 
@@ -115,7 +115,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 |---|---|
 | [`reports/M4-mtp-speculative-decoding.md`](reports/M4-mtp-speculative-decoding.md) | M4:MTP 投机解码,深度 1、验证宽度 2。 |
 | [`reports/M7-speculation-options.md`](reports/M7-speculation-options.md) | M7:其它投机方案(DFlash2、2B 草稿器、更深的 MTP 链)与宽验证的代价。 |
-| [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) | M10:采样感知草稿 —— 离线估计,闸门未达到,实现推迟。 |
+| [`reports/M10-sampling-aware-draft.md`](reports/M10-sampling-aware-draft.md) · **[.en](reports/M10-sampling-aware-draft.en.md)** | M10:采样感知草稿 —— 离线估计,闸门未达到,实现推迟。 |
 | [`reports/M14-wide-verify-gate.md`](reports/M14-wide-verify-gate.md) | M14:宽验证微基准闸门未通过,DFlash2(M15/M16)结案。 |
 | [`reports/M25-wide-verify-kernel.md`](reports/M25-wide-verify-kernel.md) · **[.en](reports/M25-wide-verify-kernel.en.md)** | M25:为 DFlash2 铺路的宽验证内核 —— 以及证明 MMA 是硬底的消融。 |
 | [`reports/M28a-draft-loading-and-quant.md`](reports/M28a-draft-loading-and-quant.md) | M28a:DFlash2 草稿的加载与 Q4_K / Q6_K 张量解码。 |
@@ -126,7 +126,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 **基础设施**
 | 文档 | 一句话 |
 |---|---|
-| [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6:分词器、chat template、采样与命令行。 |
+| [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) · **[.en](reports/M6-tokenizer-chat-cli.en.md)** | M6:分词器、chat template、采样与命令行。 |
 | [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9:持久化前缀缓存(重复的 3.6K 提示从 18.6 s 降到 0.03 s)。 |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01:仓库通读评估、遗留问题与下一步方案。 |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) · **[.en](CHECKPOINT-002.en.md)** | 检查点 2:解码与预填充工作之后的进展。 |
