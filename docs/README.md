@@ -41,8 +41,8 @@ want the details.
 | [`reports/M5-prefill.md`](reports/M5-prefill.md) | M5: batched prefill, both the exact fp16 path and the first int8 attempt. |
 | [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b: prefill optimisation — flash attention, GEMM ordering, unrolling, and the first int8 quality evaluation. |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) | M12: 16-byte-wide weight reads. Gate not met, not implemented. |
-| [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
-| [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) | M11: int8 KV cache. Includes the later correction: the original quality claim did not reproduce, the real number is 99.51% top-1, and asymmetric quantisation measured worse. |
+| [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13: int8 prefill for the FFN gate+up (`--fast-ffn`) — the one lossy switch that passed the gate. |
+| [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11: int8 KV cache. Includes the later correction: the original quality claim did not reproduce, the real number is 99.51% top-1, and asymmetric quantisation measured worse. |
 | [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17: a batch of small ideas, each measured; none cleared the 1% keep line. |
 | [`reports/M26-verification-side.md`](reports/M26-verification-side.md) | M26: arbitrary-width verification, state snapshots and commit. |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) | M27a: small grid fixes in the verification window — 20% off per round, ceiling raised to +38%. |
@@ -64,7 +64,7 @@ want the details.
 | Document | One line |
 |---|---|
 | [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6: tokenizer, chat template, sampling and the command line. |
-| [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) | M9: the persistent prefix cache (18.6 s → 0.03 s on a repeated 3.6K-token prompt). |
+| [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9: the persistent prefix cache (18.6 s → 0.03 s on a repeated 3.6K-token prompt). |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01: a read-through assessment of the repository, the open issues and the next steps. |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) | Checkpoint 2: state of play after the decode and prefill work. |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | Checkpoint 3: speculative decoding, the prefix cache and the CLI are in place. |
@@ -104,8 +104,8 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | [`reports/M5-prefill.md`](reports/M5-prefill.md) | M5:批量预填充,精确 fp16 路径与第一次 int8 尝试。 |
 | [`reports/M5b-prefill-optimization.md`](reports/M5b-prefill-optimization.md) | M5b:预填充优化 —— flash attention、GEMM 顺序、展开,以及第一次 int8 质量评估。 |
 | [`reports/M12-weight-layout.md`](reports/M12-weight-layout.md) | M12:16 字节宽权重读取。闸门未达到,不实现。 |
-| [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
-| [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) | M11:int8 KV 缓存。含后期更正:最初的画质结论无法复现,真实值是 top-1 99.51%,而非对称量化实测更差。 |
+| [`reports/M13-fast-ffn.md`](reports/M13-fast-ffn.md) · **[.en](reports/M13-fast-ffn.en.md)** | M13:FFN gate+up 的 int8 预填充(`--fast-ffn`)—— 唯一过了门限的有损开关。 |
+| [`reports/M11-int8-kv.md`](reports/M11-int8-kv.md) · **[.en](reports/M11-int8-kv.en.md)** | M11:int8 KV 缓存。含后期更正:最初的画质结论无法复现,真实值是 top-1 99.51%,而非对称量化实测更差。 |
 | [`reports/M17-small-items.md`](reports/M17-small-items.md) | M17:一批小想法,逐个测量,没有一个达到 1% 的保留线。 |
 | [`reports/M26-verification-side.md`](reports/M26-verification-side.md) | M26:任意宽度验证、状态快照与提交。 |
 | [`reports/M27a-small-grid-fixes.md`](reports/M27a-small-grid-fixes.md) | M27a:验证窗口的小网格修复 —— 每轮省 20%,上限抬到 +38%。 |
@@ -127,7 +127,7 @@ anyway. A three-word vocabulary covers the verdicts: 接受 = accept, 否决 = r
 | 文档 | 一句话 |
 |---|---|
 | [`reports/M6-tokenizer-chat-cli.md`](reports/M6-tokenizer-chat-cli.md) | M6:分词器、chat template、采样与命令行。 |
-| [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) | M9:持久化前缀缓存(重复的 3.6K 提示从 18.6 s 降到 0.03 s)。 |
+| [`reports/M9-prefix-cache.md`](reports/M9-prefix-cache.md) · **[.en](reports/M9-prefix-cache.en.md)** | M9:持久化前缀缓存(重复的 3.6K 提示从 18.6 s 降到 0.03 s)。 |
 | [`reports/REVIEW-01-repo-assessment.md`](reports/REVIEW-01-repo-assessment.md) | REVIEW-01:仓库通读评估、遗留问题与下一步方案。 |
 | [`CHECKPOINT-002.md`](CHECKPOINT-002.md) | 检查点 2:解码与预填充工作之后的进展。 |
 | [`CHECKPOINT-003.md`](CHECKPOINT-003.md) | 检查点 3:投机解码、前缀缓存与 CLI 就位。 |
